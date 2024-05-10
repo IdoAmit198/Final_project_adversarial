@@ -7,7 +7,7 @@ def get_args(description=""):
     parser.add_argument('-s', '--seed', type=int, default=0, help='Give random seed')
     # parser.add_argument('-nw', '--num_workers', type=int, default=0, help='Number of workers to fetch samples from memory.')
     parser.add_argument('-d', '--dataset',
-                        choices=['food101', 'flowers102', 'dtd', 'fgvcaircraft', 'imagenet', 'stanfordcars', 'sun397'],
+                        choices=['cifar10', 'food101', 'flowers102', 'dtd', 'fgvcaircraft', 'imagenet', 'stanfordcars', 'sun397'],
                         help='Give the dataset name from the choices.', default='cifar10')
     parser.add_argument('-m', '--model_name', default='wide_resnet50_2')
     parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='SGD')

@@ -6,6 +6,10 @@ from utils.data import load_dataloaders
 from adv_train import adv_training
 import warnings
 
+import wandb
+import random
+from datetime import datetime, timedelta
+import pytz
 
 if __name__ == '__main__':
     print("Started")
@@ -14,6 +18,11 @@ if __name__ == '__main__':
 
     args = get_args(description='Adversarial training')
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    args.log_name = f'{args.model_name}_train method_{args.train_method}_seed_{args.seed}_max epsilon_{args.max_epsilon}'
+    timezone = pytz.timezone('Asia/Jerusalem')
+    args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
+    wandb.init(project="Adversarial", name=f'{args.date_stamp}_{args.log_name}', entity = "ido-shani-proj", config=args)
     # if args.device=='cuda':
     #     gpu_ok = False
     #     device_cap = torch.cuda.get_device_capability()
@@ -23,7 +32,7 @@ if __name__ == '__main__':
     #     if not gpu_ok:
     #         print(
     #         "GPU is not NVIDIA V100, A100, or H100. Speedup numbers may be lower than expected.")
-    print(args.device)
+    # print(args.device)
     model = torch.hub.load('pytorch/vision:v0.10.0', args.model_name, weights=None)
     num_classes=10
     # if args.data =='cifar10':
@@ -49,5 +58,6 @@ if __name__ == '__main__':
     #         print(model(x).shape)
     #         break
     # print(model)
+    wandb.finish()
     exit
     # run_adv_training(args)

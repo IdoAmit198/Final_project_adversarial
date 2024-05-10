@@ -1,3 +1,5 @@
 **/cifar-10*/**
 **/*.pyc
 **/*.gz
+**/wandb/**
+**/output/**
