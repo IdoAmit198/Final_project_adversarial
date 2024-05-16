@@ -13,51 +13,34 @@ import pytz
 
 if __name__ == '__main__':
     print("Started")
-    # torch._dynamo.config.suppress_errors = True
-    # torch.set_float32_matmul_precision('high')
 
     args = get_args(description='Adversarial training')
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    args.log_name = f'{args.model_name}_train method_{args.train_method}_seed_{args.seed}_max epsilon_{args.max_epsilon}'
+    args.log_name = f'{args.model_name}_train method_{args.train_method}_agnostic_loss_{args.agnostic_loss}_seed_{args.seed}_max epsilon_{int(args.max_epsilon*255)}'
     timezone = pytz.timezone('Asia/Jerusalem')
     args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
-    wandb.init(project="Adversarial", name=f'{args.date_stamp}_{args.log_name}', entity = "ido-shani-proj", config=args)
-    # if args.device=='cuda':
-    #     gpu_ok = False
-    #     device_cap = torch.cuda.get_device_capability()
-    #     if device_cap in ((7, 0), (8, 0), (9, 0)):
-    #         gpu_ok = True
-    #         print(f"gpu ok: {gpu_ok}")
-    #     if not gpu_ok:
-    #         print(
-    #         "GPU is not NVIDIA V100, A100, or H100. Speedup numbers may be lower than expected.")
-    # print(args.device)
-    model = torch.hub.load('pytorch/vision:v0.10.0', args.model_name, weights=None)
+    wandb.init(project="Adversarial-Project", name=f'{args.date_stamp}_{args.log_name}', entity = "deep_learning_hw4", config=args)
+    wandb.define_metric("step")
+    wandb.define_metric("Epoch")
+    wandb.define_metric("Train epochs loss", step_metric="Epoch")
+    wandb.define_metric("Train epochs accuracy", step_metric="Epoch")
+    wandb.define_metric("Test epochs accuracy", step_metric="Epoch")
+    wandb.define_metric("Epsilons_metrics/min_epsilon", step_metric="Epoch")
+    wandb.define_metric("Epsilons_metrics/max_epsilon", step_metric="Epoch")
+    wandb.define_metric("Epsilons_metrics/mean_epsilon", step_metric="Epoch")
+    wandb.define_metric("Epsilons_metrics/re_introduce_cur_prob", step_metric="Epoch")
+    wandb.define_metric("Train lr", step_metric="Epoch")
+
     num_classes=10
-    # if args.data =='cifar10':
-    #     num_classes=10
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
     model = model.to(args.device)
-    # model = torch.compile(model)
-    # input = torch.ones(1,3,32,32)
+
     train_loader, test_loader = load_dataloaders(args.batch_size)
 
-    scaler = torch.cuda.amp.GradScaler()
-    adv_training(model, train_loader, args)
+    # scaler = torch.cuda.amp.GradScaler()
+    adv_training(model, train_loader, test_loader, args)
 
-
-    # print(lx.shape[0])
-    # print(model(input).shape)
-    # for i in range(2):
-    #     for batch in test_loader:
-    #         index,epsilon, x, y= batch
-    #         print(f"x.shape:{x.shape}, y.shape:{y.shape}\nindex:{index}\nepsilon:{epsilon}")
-    #         test_loader.dataset.epsilons[index] = 8/255
-    #         print('\n\n')
-    #         print(model(x).shape)
-    #         break
-    # print(model)
     wandb.finish()
     exit
     # run_adv_training(args)

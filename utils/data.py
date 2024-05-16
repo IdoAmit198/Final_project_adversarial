@@ -36,8 +36,8 @@ def load_dataloaders(batch_size=32):
 
     train_ds = DatasetWithMeta(train_dataset)
     val_ds = DatasetWithMeta(val_dataset)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=12)
-    test_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=True, num_workers=12)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=24, pin_memory=True)
+    test_loader = DataLoader(val_ds, batch_size=int(batch_size/2), shuffle=True, num_workers=24, pin_memory=True)
     # train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     # test_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
     return train_loader, test_loader
