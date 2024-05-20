@@ -13,7 +13,7 @@ def get_args(description=""):
     parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='SGD')
     parser.add_argument('-e', '--max_epochs', type=int, default=200, help='Give number of epochs for training')
     parser.add_argument('--pgd_num_steps', type=int, default=10, help='Number of PGD training iterations')
-    parser.add_argument('--max_epsilon', type=float, default=8/255, help='Maximum epsilon value for adaptive adversarial training')
+    parser.add_argument('--max_epsilon', type=int, default=8, help='Maximum epsilon value for adaptive adversarial training')
     parser.add_argument('--epsilon_step_size', type=float, default=0.005, help='Epsilon step increcement for adaptive adversarial training')
     parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')
     # We aim to use a pre-defined scheduler which lower by 10 factor at 80, 140, 180.
@@ -28,5 +28,10 @@ def get_args(description=""):
                         Will be to decide whether to measure baseline, adaptive, and such.', default='re_introduce')
     # Add a parsing argument named 'agnostic_loss' with type bool and default value of False
     parser.add_argument('--agnostic_loss', action='store_true', help='Use agnostic loss')
+    # Eval epsilons args
+    parser.add_argument('--eval_epsilons', action='store_true', help='Whether to evaluate the model on different epsilons.\n \
+                                                                    Defaults to false, and will train the model.')
+    parser.add_argument('--eval_epsilon_max', type=int, default=20, help='Maximum epsilon value for evaluation of trained models')
+    parser.add_argument('--eval_model_path', type=str, help='Path for the model to be evaluated.')
     args = parser.parse_args()
     return args

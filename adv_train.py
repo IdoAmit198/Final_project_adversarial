@@ -29,6 +29,29 @@ def PGD(model, x, y, epsilons, pgd_num_steps, targeted=False):
 def epsilon_clamp(epsilons, max_epsilon):
     return torch.clamp(epsilons, 0, max_epsilon)
 
+def adv_eval(model, test_loader, args, evaluated_epsilon):
+    model.eval()
+    test_error_samples = 0
+    test_samples_counter = 0
+    for batch in tqdm(test_loader, desc=f'Eval'):
+        _, _, x, y = batch
+        x, y = x.to(args.device), y.to(args.device)
+        test_samples_counter += x.shape[0]
+        x_pert = PGD(model, x, y, evaluated_epsilon, args.pgd_num_steps)
+        # with torch.cuda.amp.autocast():
+        y_score = model(x_pert)
+        # x_pert.to('cpu')
+        y_pred = torch.argmax(y_score, dim=1)
+        incorrect = y_pred!=y
+        test_error_samples += incorrect.sum().item()
+        # del x, x_pert, y
+        # torch.cuda.empty_cache()
+    
+
+    test_accuracy = 1 - test_error_samples/test_samples_counter
+    # print(f"Evaluated epsilon:{evaluated_epsilon*255} , Test Accuracy: {test_accuracy*100}%")
+    return test_accuracy
+
 # @torch.compile
 def adv_training(model, train_loader, test_loader, args):
     #Initialize scheduler and optimizer
