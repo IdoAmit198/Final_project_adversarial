@@ -4,6 +4,8 @@ from torch.nn import functional as F
 import wandb
 import os
 
+from utils.uncertainty_metrics import log_uncertainty
+
 def PGD(model, x, y, epsilons, pgd_num_steps, targeted=False):
     model.eval()
     x_pert = x.clone().detach().requires_grad_(True)
@@ -29,26 +31,35 @@ def PGD(model, x, y, epsilons, pgd_num_steps, targeted=False):
 def epsilon_clamp(epsilons, max_epsilon):
     return torch.clamp(epsilons, 0, max_epsilon)
 
-def adv_eval(model, test_loader, args, evaluated_epsilon):
+def adv_eval(model, test_loader, args, evaluated_epsilon, uncertainty_evaluation=False):
     model.eval()
     test_error_samples = 0
     test_samples_counter = 0
+    samples_certainties = torch.empty((0, 2))
     for batch in tqdm(test_loader, desc=f'Eval'):
         _, _, x, y = batch
         x, y = x.to(args.device), y.to(args.device)
         test_samples_counter += x.shape[0]
         x_pert = PGD(model, x, y, evaluated_epsilon, args.pgd_num_steps)
         # with torch.cuda.amp.autocast():
-        y_score = model(x_pert)
+        with torch.no_grad():
+            y_score = model(x_pert)
         # x_pert.to('cpu')
         y_pred = torch.argmax(y_score, dim=1)
         incorrect = y_pred!=y
         test_error_samples += incorrect.sum().item()
-        # del x, x_pert, y
-        # torch.cuda.empty_cache()
-    
+        if uncertainty_evaluation:
+            probs = F.softmax(y_score, dim=1)
+            confidence = probs.max(dim=1)[0].cpu()
+            correctness = (probs.argmax(dim=1) == y).cpu()
+            samples_certainties_batch = torch.stack([confidence.clone(), correctness.clone()])
+            samples_certainties = torch.vstack((samples_certainties, samples_certainties_batch.transpose(0, 1))).cpu()
 
     test_accuracy = 1 - test_error_samples/test_samples_counter
+    
+    if uncertainty_evaluation:
+        uncertainty_dict = log_uncertainty(samples_certainties, args.rc_curve_save_pth)
+        return test_accuracy, uncertainty_dict
     # print(f"Evaluated epsilon:{evaluated_epsilon*255} , Test Accuracy: {test_accuracy*100}%")
     return test_accuracy
 

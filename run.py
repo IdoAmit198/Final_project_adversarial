@@ -1,3 +1,4 @@
+import os
 from utils.args import get_args
 import torch
 from torch import nn
@@ -59,15 +60,51 @@ if __name__ == '__main__':
         eval_trained_epsilon = args.eval_model_path.split('/')[-1]
         eval_trained_epsilon = re.search('[\d][\d]?', eval_trained_epsilon).group()
         assert type(eval_trained_epsilon) == str
-        eval_results = []
-        train_results = []
         epsilons_list = list(range(args.eval_epsilon_max+1))
+        
+        acc_eval = True
+        df = None
+
+        # Check whether the file in {save_dir}/eval_accuracy_{eval_trained_epsilon}.csv already exist:
+        if os.path.exists(f'{save_dir}/eval_accuracy_{eval_trained_epsilon}.csv'):
+            print(f"File {save_dir}/eval_accuracy_{eval_trained_epsilon}.csv already exists. Appending to it")
+            df = pd.read_csv(f'{save_dir}/eval_accuracy_{eval_trained_epsilon}.csv')
+            # Verify whether the file contains the same epsilons as the current run (compare number of lines in file)
+            if len(df) != args.eval_epsilon_max+1:
+                epsilons_list = epsilons_list[len(df)+1:]
+            else:
+                acc_eval = False
+            # epsilons_list = epsilons_list[21:]
+        if args.eval_uncertainty:
+            epsilons_list = list(range(args.eval_epsilon_max+1))
+            uncertainty_dicts_list = []
+        print(f"epsilons_list len: {len(epsilons_list)}")
+        if acc_eval:
+            # exit()
+            eval_results = []
+            train_results = []
+        args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
         for epsilon in epsilons_list:
-            eval_results.append(adv_eval(model, test_loader, args, epsilon/255))
-            train_results.append(adv_eval(model, train_loader, args, epsilon/255))
-            print(f"Evaluated epsilon:{epsilon} , Test Accuracy: {eval_results[-1]*100}% , Train Accuracy: {train_results[-1]*100}%")
+            test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
+            if acc_eval:
+                train_results.append(adv_eval(model, train_loader, args, epsilon/255))
+                eval_results.append(test_acc)
+                print(f"Evaluated epsilon:{epsilon} , Test Accuracy: {eval_results[-1]*100}% , Train Accuracy: {train_results[-1]*100}%")
+            if args.eval_uncertainty:
+                # print(uncertainty_dict)
+                uncertainty_dicts_list.append(uncertainty_dict)
+
         # Create a pandas dataframe out of the three lists: eval_results, train_results, epsilons_list
-        df = pd.DataFrame(list(zip(epsilons_list, eval_results, train_results)), columns=['epsilon', 'eval_results', 'train_results'])
+        # exit()
+        if acc_eval:
+            df = pd.DataFrame(list(zip(epsilons_list, eval_results, train_results)), columns=['epsilon', 'eval_results', 'train_results'])
+        # if zero_to_16_df is not None:
+        #     df = pd.concat([zero_to_16_df, df])
+        if args.eval_uncertainty:
+            uncertainty_df = pd.DataFrame.from_dict(uncertainty_dicts_list)
+            # uncertainty_df and df are two dataframes with the same number of rows but different columns. We want to join them by the index.
+            # We will use the pandas concat method to join them by the index.
+            df = pd.concat([df, uncertainty_df], axis=1)
         df.to_csv(f'{save_dir}/eval_accuracy_{eval_trained_epsilon}.csv', index=False)
     
     exit

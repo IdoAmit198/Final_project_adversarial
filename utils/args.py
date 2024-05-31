@@ -31,7 +31,10 @@ def get_args(description=""):
     # Eval epsilons args
     parser.add_argument('--eval_epsilons', action='store_true', help='Whether to evaluate the model on different epsilons.\n \
                                                                     Defaults to false, and will train the model.')
-    parser.add_argument('--eval_epsilon_max', type=int, default=20, help='Maximum epsilon value for evaluation of trained models')
+    parser.add_argument('--eval_epsilon_max', type=int, default=32, help='Maximum epsilon value for evaluation of trained models')
     parser.add_argument('--eval_model_path', type=str, help='Path for the model to be evaluated.')
+    parser.add_argument('--eval_uncertainty', action='store_true',
+                        help='Whether to evaluate the uncertainty estimation abilities of the trained model.\n \
+                        Uncertainty estimation will be assessed only using the test set.')
     args = parser.parse_args()
     return args
