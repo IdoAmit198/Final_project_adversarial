@@ -21,17 +21,14 @@ if __name__ == '__main__':
     args = get_args(description='Adversarial training')
     args.max_epsilon = args.max_epsilon/255
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-
     
     train_loader, test_loader = load_dataloaders(args.batch_size)
     num_classes=10
     model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
     model = model.to(args.device)
 
-    # scaler = torch.cuda.amp.GradScaler()
     if not args.eval_epsilons:
-        # wandb login and logs
+        # wanbd logging initialization
         args.log_name = f'{args.model_name}_train method_{args.train_method}_agnostic_loss_{args.agnostic_loss}_seed_{args.seed}_max epsilon_{int(args.max_epsilon*255)}'
         timezone = pytz.timezone('Asia/Jerusalem')
         args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
@@ -46,11 +43,12 @@ if __name__ == '__main__':
         wandb.define_metric("Epsilons_metrics/mean_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/re_introduce_cur_prob", step_metric="Epoch")
         wandb.define_metric("Train lr", step_metric="Epoch")
+        # Actual training
         adv_training(model, train_loader, test_loader, args)
         wandb.finish()
     
     else:
-        # load statce_dict of the model from given path
+        # load statce_dict of the trained model from given path
         model.load_state_dict(torch.load(args.eval_model_path))
         print("Model loaded")
         print(f"path: {args.eval_model_path}")
@@ -74,13 +72,11 @@ if __name__ == '__main__':
                 epsilons_list = epsilons_list[len(df)+1:]
             else:
                 acc_eval = False
-            # epsilons_list = epsilons_list[21:]
         if args.eval_uncertainty:
             epsilons_list = list(range(args.eval_epsilon_max+1))
             uncertainty_dicts_list = []
         print(f"epsilons_list len: {len(epsilons_list)}")
         if acc_eval:
-            # exit()
             eval_results = []
             train_results = []
         args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
@@ -91,21 +87,15 @@ if __name__ == '__main__':
                 eval_results.append(test_acc)
                 print(f"Evaluated epsilon:{epsilon} , Test Accuracy: {eval_results[-1]*100}% , Train Accuracy: {train_results[-1]*100}%")
             if args.eval_uncertainty:
-                # print(uncertainty_dict)
                 uncertainty_dicts_list.append(uncertainty_dict)
 
-        # Create a pandas dataframe out of the three lists: eval_results, train_results, epsilons_list
-        # exit()
         if acc_eval:
             df = pd.DataFrame(list(zip(epsilons_list, eval_results, train_results)), columns=['epsilon', 'eval_results', 'train_results'])
-        # if zero_to_16_df is not None:
-        #     df = pd.concat([zero_to_16_df, df])
+
         if args.eval_uncertainty:
             uncertainty_df = pd.DataFrame.from_dict(uncertainty_dicts_list)
-            # uncertainty_df and df are two dataframes with the same number of rows but different columns. We want to join them by the index.
-            # We will use the pandas concat method to join them by the index.
             df = pd.concat([df, uncertainty_df], axis=1)
         df.to_csv(f'{save_dir}/eval_accuracy_{eval_trained_epsilon}.csv', index=False)
     
+    # Finished running training or evaluation.
     exit
-    # run_adv_training(args)
