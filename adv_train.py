@@ -187,7 +187,8 @@ def adv_training(model, train_loader, test_loader, args):
         
 
     # Save the trained model at given path and verify whether the directory exists
-    save_dir = f"saved_models/{args.model_name}/seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
+    additional_folder = 'sanity_check/' if args.sanity_check else ''
+    save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     torch.save(model.state_dict(), f"{save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
