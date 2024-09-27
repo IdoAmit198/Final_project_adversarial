@@ -6,7 +6,19 @@ In this work, we assessed the contribution of the adaptive setting introduced in
 We adversarially train on the train set of Cifar-10 and evaluate robustness on the test set for a wide range of epsilon values.
 
 ## Install
-
+1. Create an environment, using venv, Conda, or whatever. We implemented using Python version 3.10.1, but other recent versions will probably work as well. For example, using conda, one can run the following:
+```
+conda create --name adversarial-env python=3.10
+conda activate adversarial-env
+```
+2. Next, clone this repository:
+```
+git clone https://github.com/IdoAmit198/Final_project_adversarial.git
+```
+3. Install requirements:
+```
+pip install -r requirements.txt
+```
 
 ## How to run
 Generally, the main script is the `run.py`. Both training and evaluation are done using this script.
