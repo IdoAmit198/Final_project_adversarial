@@ -1,5 +1,6 @@
 import os
 from utils.args import get_args
+from utils import models
 import torch
 from torch import nn
 import torchvision
@@ -9,6 +10,9 @@ from adv_train import adv_training, adv_eval
 import pandas as pd
 import re
 
+import numpy as np
+import random
+
 import wandb
 from datetime import datetime, timedelta
 import pytz
@@ -17,12 +21,20 @@ if __name__ == '__main__':
     print("Started")
 
     args = get_args(description='Adversarial training')
+    
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+
     args.max_epsilon = args.max_epsilon/255
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     train_loader, test_loader = load_dataloaders(args.batch_size)
     num_classes=10
-    model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
+    if 'wide' in args.model_name.lower():
+        model = getattr(models, args.model_name)(num_classes=num_classes)
+    else:
+        model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
     model = model.to(args.device)
 
     if not args.eval_epsilons:

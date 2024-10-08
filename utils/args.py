@@ -8,7 +8,7 @@ def get_args(description=""):
     parser.add_argument('-d', '--dataset',
                         choices=['cifar10', 'cifar100', 'flowers102', 'mnist', 'imagenet'],
                         help='Give the dataset name from the choices. Currently, only Cifar-10 is supported.', default='cifar10')
-    parser.add_argument('-m', '--model_name', choices=['wide_resnet50_2', 'resnet18'] ,default='resnet18')
+    parser.add_argument('-m', '--model_name', choices=['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'resnet50'] ,default='resnet18')
     parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='SGD')
     parser.add_argument('-e', '--max_epochs', type=int, default=200, help='Give number of epochs for training')
     parser.add_argument('--pgd_num_steps', type=int, default=10, help='Number of PGD training iterations')
