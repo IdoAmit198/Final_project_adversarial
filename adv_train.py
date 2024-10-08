@@ -110,16 +110,16 @@ def adv_training(model, train_loader, test_loader, args):
             y_score = model(x_pert)
             loss_pert = F.cross_entropy(y_score, y)
             epoch_loss_pert += loss_pert.item()
+            y_clean_score = model(x)
+            loss_clean = F.cross_entropy(y_clean_score, y)
             if args.agnostic_loss:
                 y_score_targeted = model(x_targeted_pert)
                 loss_targeted = F.cross_entropy(y_score_targeted, y)
-                y_clean_score = model(x)
-                loss_clean = F.cross_entropy(y_clean_score, y)
                 total_loss = (loss_pert + loss_clean + loss_targeted)/3
                 loss_targeted_epoch += loss_targeted.item()
-                loss_clean_epoch += loss_clean.item()
             else:
-                total_loss = loss_pert
+                total_loss = (loss_pert + loss_clean)/2
+            loss_clean_epoch += loss_clean.item()
             total_loss_epoch += total_loss.item()
             y_pred = torch.argmax(y_score, dim=1)
             incorrect = (y_pred!=y).to('cpu')
@@ -170,13 +170,12 @@ def adv_training(model, train_loader, test_loader, args):
                        "Epoch": epoch+1})
         if args.agnostic_loss:
             wandb.log({"Train epochs targeted loss": loss_targeted_epoch/len(train_loader),
-                        "Train epochs clean loss": loss_clean_epoch/len(train_loader),
-                        "Train epochs pert loss": epoch_loss_pert/len(train_loader), 
                         "Epoch": epoch+1})
         if args.train_method == 're_introduce':
             wandb.log({"Epsilons_metrics/re_introduce_cur_prob": re_introduce_cur_prob,
                         "Epoch": epoch+1})
-        wandb.log({"Train epochs loss": total_loss/len(train_loader),
+        wandb.log({"Train epochs loss": epoch_loss_pert/len(train_loader),
+                   "Train epochs clean loss": loss_clean_epoch/len(train_loader),
                    "Train epochs accuracy": train_accuracy*100,
                    "train_lr": scheduler.get_last_lr()[0],
                    "Epsilons_metrics/min_epsilon": min_epsilon,
