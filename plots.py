@@ -87,6 +87,10 @@ def plot_data(csv_files:list, y_label_column:str, specific_epsilon = None, speci
         label = '' + f'Method: {train_method}, ' if specific_method is None else ''
         label += f'Agnostic: {whether_agnostic}, ' if specific_agnostic is None else ''
         label += f'Train_epsilon: {eval_trained_epsilon}' if specific_epsilon is None else ''
+        if 'sanity_check' in file:
+            label = 'Sanity Check - ' + label
+        if 'sanity_check_2' in file:
+            label = 'Sanity Check 2 - ' + label
         plt.plot(epsilons, column_results, label=label)
     plt.xlabel('Epsilons')
     if y_label_column=='eval_results':
@@ -114,13 +118,13 @@ def plot_data(csv_files:list, y_label_column:str, specific_epsilon = None, speci
     plt.close()
 
 if __name__ == '__main__':
-    # Used the below to plot the left figure in Figure 2 
-    files_list = ['saved_models/resnet18/seed_42/train_method_adaptive/agnostic_loss_True/eval_accuracy_32.csv',
-                  'saved_models/resnet18/seed_42/train_method_re_introduce/agnostic_loss_True/eval_accuracy_16.csv',
-                  'saved_models/resnet18/seed_42/train_method_train/agnostic_loss_False/eval_accuracy_32.csv']
-    plot_specific_data(files_list, 'eval_results', 'best_results')
+    # # Used the below to plot the left figure in Figure 2 
+    # files_list = ['saved_models/resnet18/seed_42/train_method_adaptive/agnostic_loss_True/eval_accuracy_32.csv',
+    #               'saved_models/resnet18/seed_42/train_method_re_introduce/agnostic_loss_True/eval_accuracy_16.csv',
+    #               'saved_models/resnet18/seed_42/train_method_train/agnostic_loss_False/eval_accuracy_32.csv']
+    # plot_specific_data(files_list, 'eval_results', 'best_results')
     
-    # Find all csv files in current folder and its subfolder to plot every possible figure.
+    # # Find all csv files in current folder and its subfolder to plot every possible figure.
     dir_path = '.'
     matches = []
     for parent, dirnames, filenames in os.walk(dir_path):
@@ -134,12 +138,16 @@ if __name__ == '__main__':
         'ece15': 'ECE15',
         'confidence_mean': 'Confidence',
     }
-    for y_label_column in ['train_results', 'eval_results', 'AUROC', 'AURC', 'ece15', 'confidence_mean']:
-        plot_data(matches, y_label_column)
-        plot_data(matches, y_label_column, specific_epsilon='8')
-        plot_data(matches, y_label_column, specific_epsilon='16')
-        plot_data(matches, y_label_column, specific_epsilon='32')
-        plot_data(matches, y_label_column, specific_method='adaptive')
-        plot_data(matches, y_label_column, specific_method='re_introduce')
-        plot_data(matches, y_label_column, specific_agnostic='True')
-        plot_data(matches, y_label_column, specific_agnostic='False')
+    # for y_label_column in ['train_results', 'eval_results', 'AUROC', 'AURC', 'ece15', 'confidence_mean']:
+    #     plot_data(matches, y_label_column)
+    #     plot_data(matches, y_label_column, specific_epsilon='8')
+    #     plot_data(matches, y_label_column, specific_epsilon='16')
+    #     plot_data(matches, y_label_column, specific_epsilon='32')
+    #     plot_data(matches, y_label_column, specific_method='adaptive')
+    #     plot_data(matches, y_label_column, specific_method='re_introduce')
+    #     plot_data(matches, y_label_column, specific_agnostic='True')
+    #     plot_data(matches, y_label_column, specific_agnostic='False')
+
+    # Testing sanity case
+    # matches = ['saved_models/resnet18/sanity_check/seed_42/train_method_re_introduce/agnostic_loss_False/eval_accuracy_32.csv']
+    plot_data(matches, 'eval_results', specific_epsilon='32')

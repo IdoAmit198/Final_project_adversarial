@@ -12,6 +12,8 @@ def PGD(model, x, y, epsilons, pgd_num_steps, targeted=False):
     x_pert = x_pert + (torch.zeros_like(x_pert).uniform_(-1,1)*epsilons)
     for i in range(pgd_num_steps):
         y_score = model(x_pert)
+        # print(f"x_pert shape: {x_pert.shape}")
+        # print(f"y_score shape: {y_score.shape} , y shape: {y.shape}")
         loss = F.cross_entropy(y_score, y)
         grad = torch.autograd.grad(loss.mean(), [x_pert])[0].detach()
         x_grad = torch.sign(grad)

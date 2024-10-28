@@ -17,7 +17,7 @@ def get_args(description=""):
     parser.add_argument('--epsilon_step_size', type=float, default=0.005, help='Epsilon step increcement for adaptive adversarial training')
     parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')
     # We aim to use a pre-defined scheduler which lower by 10 factor at 80, 140, 180.
-    parser.add_argument('-bs', '--batch_size', type=int, default=64,
+    parser.add_argument('-bs', '--batch_size', type=int, default=32,
                         help='Batch size.')
     parser.add_argument('-lr', '--learning_rate', default=1e-1, type=float, help='learning rate for training')
     parser.add_argument('-wd', '--weight_decay', default=5e-4, type=float, help='weight decay for training')
@@ -30,7 +30,7 @@ def get_args(description=""):
                                                                     Defaults to false, and will train the model.')
     parser.add_argument('--sanity_check', action='store_true', help='Whether we make a sanity check now. If we do, it changes the save dir.\n \
                                                                     Defaults to false.')
-    parser.add_argument('--eval_epsilon_max', type=int, default=32, help='Maximum epsilon value for evaluation of trained models')
+    parser.add_argument('--eval_epsilon_max', type=int, default=64, help='Maximum epsilon value for evaluation of trained models')
     parser.add_argument('--eval_model_path', type=str, help='Path for the model to be evaluated.')
     parser.add_argument('--eval_uncertainty', action='store_true',
                         help='Whether to evaluate the uncertainty estimation abilities of the trained model.\n \

@@ -25,20 +25,32 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-def load_dataloaders(batch_size:int = 32, seed:int = 42):
+def load_dataloaders(args, seed:int = 42):
+    batch_size = args.batch_size
     g = torch.Generator()
     g.manual_seed(seed)
+    if 'wide' in args.model_name.lower():
+        train_transform = transforms.Compose([
+            transforms.Resize((32, 32)),
+            # transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+        ])
 
-    train_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        # transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-    ])
+        test_transform = transforms.Compose([
+            transforms.Resize((32, 32)),
+            transforms.ToTensor(),
+        ])
+    else:    
+        train_transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            # transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+        ])
 
-    test_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-    ])
+        test_transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+        ])
 
     train_dataset = datasets.CIFAR10(root="./data", train=True, transform=train_transform, download=True)
     val_dataset = datasets.CIFAR10(root="./data", train=False, transform=test_transform, download=True)

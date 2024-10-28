@@ -1,6 +1,6 @@
 import os
 from utils.args import get_args
-from utils import models
+from utils.models import wide_resnet
 import torch
 from torch import nn
 import torchvision
@@ -29,10 +29,10 @@ if __name__ == '__main__':
     args.max_epsilon = args.max_epsilon/255
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    train_loader, test_loader = load_dataloaders(args.batch_size)
+    train_loader, test_loader = load_dataloaders(args)
     num_classes=10
     if 'wide' in args.model_name.lower():
-        model = getattr(models, args.model_name)(num_classes=num_classes)
+        model = getattr(wide_resnet, args.model_name)(num_classes=num_classes)
     else:
         model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
     model = model.to(args.device)
