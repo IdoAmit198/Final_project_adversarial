@@ -1,10 +1,58 @@
 from torch.utils.data import DataLoader
-from torchvision import transforms, datasets
+from torchvision import datasets
+from torchvision.transforms import v2
 from torchvision.datasets import VisionDataset
 
 import torch
 import numpy as np
 import random
+
+# Implementing the Cutout augmentation
+# Implementatino is taken from:
+# https://discuss.pytorch.org/t/why-does-data-augmentation-decrease-validation-accuracy-pytorch-keras-comparison/29297/6
+class Cutout(object):
+    """
+    Randomly mask out one or more patches from an image.
+    Args:
+        n_holes (int): Number of patches to cut out of each image.
+        length (int): The length (in pixels) of each square patch.
+    """
+    def __init__(self, n_holes, length):
+        self.n_holes = n_holes
+        self.length = length
+
+    def __call__(self, img):
+        """
+        Args:
+            img (Tensor): Tensor image of size (B, C, H, W).
+        Returns:
+            Tensor: Image with n_holes of dimension length x length cut out of it.
+        """
+        if len(img.shape) == 3:
+            img = img.unsqueeze(0)
+        b = img.size(0)
+        c = img.size(1)
+        h = img.size(2)
+        w = img.size(3)
+        mask = np.ones((b, c, h, w), np.float32)
+
+        for n in range(self.n_holes):
+            y = np.random.randint(h, size=b)
+            x = np.random.randint(w, size=b)
+
+            y1 = (np.clip(y - self.length / 2, 0, h)).astype(int)
+            y2 = (np.clip(y + self.length / 2, 0, h)).astype(int)
+            x1 = (np.clip(x - self.length / 2, 0, w)).astype(int)
+            x2 = (np.clip(x + self.length / 2, 0, w)).astype(int)
+
+            for i in range(b):
+                mask[i, :, y1[i]:y2[i], x1[i]:x2[i]] = 0
+
+        mask = torch.from_numpy(mask)
+        # mask = mask.expand_as(img)
+        img = img * mask.to(img.device)
+
+        return img
 
 class DatasetWithMeta(torch.utils.data.Dataset):
     def __init__(self, dataset):
@@ -29,29 +77,35 @@ def load_dataloaders(args, seed:int = 42):
     batch_size = args.batch_size
     g = torch.Generator()
     g.manual_seed(seed)
+    image_size = 32
     if 'wide' in args.model_name.lower():
-        train_transform = transforms.Compose([
-            transforms.Resize((32, 32)),
-            # transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-        ])
+        image_size = 32
+    else:
+        image_size = 224    
+    train_transform = v2.Compose([
+        # v2.ToImage(),
+        v2.Resize((image_size, image_size)),
+        # v2.RandomHorizontalFlip(),
+        # v2.RandomRotation(15),
+        v2.ToTensor(),
+        v2.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2471, 0.2435, 0.2616]),
+    ])
 
-        test_transform = transforms.Compose([
-            transforms.Resize((32, 32)),
-            transforms.ToTensor(),
-        ])
-    else:    
-        train_transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            # transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-        ])
-
-        test_transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-        ])
-
+    test_transform = v2.Compose([
+        v2.Resize((image_size, image_size)),
+        v2.ToTensor(),
+        v2.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2471, 0.2435, 0.2616]),
+    ])
+        # train_transform = transforms.Compose([
+        #     transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2471, 0.2435, 0.2616]),
+        #     transforms.Resize((image_size, image_size)),
+        #     transforms.RandomHorizontalFlip(),
+        #     transforms.ToTensor(),
+        # test_transform = transforms.Compose([
+        #     transforms.Resize((224, 224)),
+        #     transforms.ToTensor(),
+        # ])
+    # train_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
     train_dataset = datasets.CIFAR10(root="./data", train=True, transform=train_transform, download=True)
     val_dataset = datasets.CIFAR10(root="./data", train=False, transform=test_transform, download=True)
 

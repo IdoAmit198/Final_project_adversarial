@@ -4,20 +4,25 @@ from torch.nn import functional as F
 import wandb
 import os
 
-from utils.uncertainty_metrics import log_uncertainty
+from torchvision.transforms import v2
+from utils.data import Cutout 
 
-def PGD(model, x, y, epsilons, pgd_num_steps, targeted=False):
+
+from utils.uncertainty_metrics import log_uncertainty
+from utils.warm_schduler import WarmupCosineLR
+
+def PGD(model, x, y, epsilons, args, targeted=False):
     model.eval()
     x_pert = x.clone().detach().requires_grad_(True)
     x_pert = x_pert + (torch.zeros_like(x_pert).uniform_(-1,1)*epsilons)
-    for i in range(pgd_num_steps):
+    for i in range(args.pgd_num_steps):
         y_score = model(x_pert)
         # print(f"x_pert shape: {x_pert.shape}")
         # print(f"y_score shape: {y_score.shape} , y shape: {y.shape}")
         loss = F.cross_entropy(y_score, y)
         grad = torch.autograd.grad(loss.mean(), [x_pert])[0].detach()
         x_grad = torch.sign(grad)
-        pgd_step_size = epsilons/5
+        pgd_step_size = epsilons*args.pgd_step_size_factor
         pgd_grad_step = pgd_step_size*x_grad
         assert pgd_grad_step.shape == x.shape
         if not targeted:
@@ -36,12 +41,12 @@ def adv_eval(model, test_loader, args, evaluated_epsilon, uncertainty_evaluation
     test_error_samples = 0
     test_samples_counter = 0
     samples_certainties = torch.empty((0, 2))
-    for batch in tqdm(test_loader, desc=f'Eval'):
+    for batch in test_loader:
         # Load only the samples, no need for the epsilons nor indices since we won't modify those.
         _, _, x, y = batch
         x, y = x.to(args.device), y.to(args.device)
         test_samples_counter += x.shape[0]
-        x_pert = PGD(model, x, y, evaluated_epsilon, args.pgd_num_steps)
+        x_pert = PGD(model, x, y, evaluated_epsilon, args)
         # Model isn't trainign so if we don't train a PGD attack, no need for gradients.
         with torch.no_grad():
             y_score = model(x_pert)
@@ -63,15 +68,54 @@ def adv_eval(model, test_loader, args, evaluated_epsilon, uncertainty_evaluation
         return test_accuracy, uncertainty_dict
     return test_accuracy
 
+def configure_optimizers(model, train_dataloader, args):
+    if args.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(
+            model.parameters(),
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
+            momentum=args.momentum,
+            nesterov=True
+        )
+    elif args.optimizer == 'ADAM':
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
+        )
+
+    steps_per_epoch = len(train_dataloader.batch_sampler)
+    total_steps = args.max_epochs * steps_per_epoch
+    if args.scheduler == "WarmupCosineLR":
+        scheduler = WarmupCosineLR(optimizer, warmup_epochs=total_steps * args.warmup_ratio, max_epochs=total_steps)
+    elif args.scheduler == "MultiStepLR":
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 140, 180], gamma=0.1)
+    else:
+        raise NotImplementedError(f"Scheduler {args.scheduler} is not implemented.")
+    return optimizer, scheduler
+
 def adv_training(model, train_loader, test_loader, args):
     # Initialize the optimizer and the scheduler
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 140, 180], gamma=0.1)
+    optimizer, scheduler = configure_optimizers(model, train_loader, args)
+    # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
+    # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 140, 180], gamma=0.1)
     # Initialize a linear scheduler for the probability to re-introudce smaller epsilon values.
     # It rise steadily from 0 to args.re_introduce_prob in the first half of the training and then stays constant.
     re_introduce_prob_step_size = 2*args.re_introduce_prob/args.max_epochs
     re_introduce_cur_prob = 0
     # Actual training+eval loop. We make an evaluation every 5 epochs.
+    
+    # Initialize augmentation transformation for clean samples:
+    clean_transform = v2.Compose([
+        v2.RandomHorizontalFlip(),
+        v2.RandomRotation(15),
+    ])
+    if 'wide' in args.model_name.lower():
+        image_size = 32
+    else:
+        image_size = 224    
+    clean_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
+
     for epoch in range(args.max_epochs):
         if re_introduce_cur_prob < args.re_introduce_prob:
             re_introduce_cur_prob += re_introduce_prob_step_size
@@ -101,18 +145,19 @@ def adv_training(model, train_loader, test_loader, args):
                     epsilons_tensor -= random_uniform
                 epsilons_tensor = epsilons_tensor.unsqueeze(1).unsqueeze(1).unsqueeze(1)
                 epsilons_to_pgd = epsilons_tensor
-            x_pert = PGD(model, x, y, epsilons_to_pgd, args.pgd_num_steps)
+            x_pert = PGD(model, x, y, epsilons_to_pgd, args)
 
             if args.agnostic_loss:
                 # Generate y_targeted with random different labels than y
                 y_targeted = torch.randint(0, 9, (x.shape[0],), device=args.device)
                 y_targeted[y_targeted>=y] += 1
-                x_targeted_pert = PGD(model, x, y_targeted, epsilons_to_pgd, args.pgd_num_steps, targeted=True)
+                x_targeted_pert = PGD(model, x, y_targeted, epsilons_to_pgd, args, targeted=True)
             model.train()
             y_score = model(x_pert)
             loss_pert = F.cross_entropy(y_score, y)
             epoch_loss_pert += loss_pert.item()
-            y_clean_score = model(x)
+            x_augmented = clean_transform(x)
+            y_clean_score = model(x_augmented)
             loss_clean = F.cross_entropy(y_clean_score, y)
             if args.agnostic_loss:
                 y_score_targeted = model(x_targeted_pert)
@@ -135,6 +180,7 @@ def adv_training(model, train_loader, test_loader, args):
             optimizer.zero_grad()
             total_loss.backward()
             optimizer.step()
+            scheduler.step()
             # Empty cache
             del x, x_pert, y
             torch.cuda.empty_cache()
@@ -155,7 +201,7 @@ def adv_training(model, train_loader, test_loader, args):
                 indices, epsilons, x, y = batch
                 x, y = x.to(args.device), y.to(args.device)
                 test_samples_counter += x.shape[0]
-                x_pert = PGD(model, x, y, args.max_epsilon, args.pgd_num_steps)
+                x_pert = PGD(model, x, y, args.max_epsilon, args)
                 # with torch.cuda.amp.autocast():
                 y_score = model(x_pert)
                 x_pert.to('cpu')
@@ -184,17 +230,16 @@ def adv_training(model, train_loader, test_loader, args):
                     "Epsilons_metrics/max_epsilon": max_epsilon,
                     "Epsilons_metrics/mean_epsilon": mean_epsilon,
                    "Epoch":epoch+1})
-        scheduler.step()
         
 
     # Save the trained model at given path and verify whether the directory exists
-    additional_folder = 'sanity_check/' if args.sanity_check else ''
-    save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
-    if os.path.exists(save_dir) and args.sanity_check:
-        print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
-        additional_folder = 'sanity_check_2/'
-        save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    torch.save(model.state_dict(), f"{save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
+    # additional_folder = 'sanity_check/' if args.sanity_check else ''
+    # save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
+    # if os.path.exists(save_dir) and args.sanity_check:
+    #     print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
+    #     additional_folder = 'sanity_check_2-new/'
+    #     save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
+    # if not os.path.exists(save_dir):
+    #     os.makedirs(save_dir)
+    torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
         

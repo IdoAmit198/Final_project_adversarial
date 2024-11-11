@@ -1,4 +1,7 @@
+import json
 import os
+
+from tqdm import tqdm
 from utils.args import get_args
 from utils.models import wide_resnet
 import torch
@@ -39,10 +42,13 @@ if __name__ == '__main__':
 
     if not args.eval_epsilons:
         # wanbd logging initialization
+        if args.optimizer == 'Adam':
+            # TODO: Refactor later to better practice.
+            args.learning_rate = 1e-3
         args.log_name = f'{args.model_name}_train method_{args.train_method}_agnostic_loss_{args.agnostic_loss}_seed_{args.seed}_max epsilon_{int(args.max_epsilon*255)}'
         timezone = pytz.timezone('Asia/Jerusalem')
         args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
-        wandb.init(project="Adversarial-Project", name=f'{args.date_stamp}_{args.log_name}', entity = "deep_learning_hw4", config=args)
+        wandb.init(project="Adversarial-adaptive-project", name=f'{args.date_stamp}_{args.log_name}', entity = "ido-shani-proj", config=args)
         wandb.define_metric("step")
         wandb.define_metric("Epoch")
         wandb.define_metric("Train epochs loss", step_metric="Epoch")
@@ -53,6 +59,19 @@ if __name__ == '__main__':
         wandb.define_metric("Epsilons_metrics/mean_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/re_introduce_cur_prob", step_metric="Epoch")
         wandb.define_metric("Train lr", step_metric="Epoch")
+        # Define the save_dir and save the args in that dir as a json file.
+        additional_folder = 'sanity_check/' if args.sanity_check else ''
+        save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
+        if os.path.exists(save_dir) and args.sanity_check:
+            print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
+            additional_folder = 'sanity_check_2-new/'
+            save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        args.save_dir = save_dir
+        with open(f'{save_dir}/args.json', 'w') as f:
+            json.dump(args.__dict__, f, indent=2)
+        print(f"args saved in {save_dir}/args.json")
         # Actual training
         adv_training(model, train_loader, test_loader, args)
         wandb.finish()
@@ -90,7 +109,7 @@ if __name__ == '__main__':
             eval_results = []
             train_results = []
         args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
-        for epsilon in epsilons_list:
+        for epsilon in tqdm(epsilons_list, desc=f'Eval'):
             test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if acc_eval:
                 train_results.append(adv_eval(model, train_loader, args, epsilon/255))

@@ -6,4 +6,4 @@ conda activate cs236207
 # Use TCMalloc instead of Malloc to boost performance and avoid data leakage.
 # export LD_PRELOAD="/usr/lib/libtcmalloc.so" 
 # This script requires the sbatch to run with at least 12 CPUs!
-srun -c 16 --gres=gpu:1 python3 run.py --train_method re_introduce --max_epsilon 32 --agnostic_loss
+srun -c 12 --gres=gpu:1 python3 run.py --train_method re_introduce --re_introduce_prob 0 --sanity_check --max_epsilon 32 
