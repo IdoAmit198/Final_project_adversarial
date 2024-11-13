@@ -31,8 +31,11 @@ if __name__ == '__main__':
 
     args.max_epsilon = args.max_epsilon/255
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Device: {args.device}")
+    args.cpu_num = len(os.sched_getaffinity(0))
+    print(f"args:\n{args}")
     
-    train_loader, test_loader = load_dataloaders(args)
+    train_loader, validation_loader, test_loader = load_dataloaders(args)
     num_classes=10
     if 'wide' in args.model_name.lower():
         model = getattr(wide_resnet, args.model_name)(num_classes=num_classes)
@@ -54,6 +57,7 @@ if __name__ == '__main__':
         wandb.define_metric("Train epochs loss", step_metric="Epoch")
         wandb.define_metric("Train epochs accuracy", step_metric="Epoch")
         wandb.define_metric("Test epochs accuracy", step_metric="Epoch")
+        wandb.define_metric("Test epochs loss", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/min_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/max_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/mean_epsilon", step_metric="Epoch")
@@ -61,7 +65,7 @@ if __name__ == '__main__':
         wandb.define_metric("Train lr", step_metric="Epoch")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
-        save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
+        save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}"
         if os.path.exists(save_dir) and args.sanity_check:
             print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
             additional_folder = 'sanity_check_2-new/'
@@ -73,7 +77,7 @@ if __name__ == '__main__':
             json.dump(args.__dict__, f, indent=2)
         print(f"args saved in {save_dir}/args.json")
         # Actual training
-        adv_training(model, train_loader, test_loader, args)
+        adv_training(model, train_loader, validation_loader, test_loader, args)
         wandb.finish()
     
     else:

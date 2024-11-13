@@ -94,7 +94,7 @@ def configure_optimizers(model, train_dataloader, args):
         raise NotImplementedError(f"Scheduler {args.scheduler} is not implemented.")
     return optimizer, scheduler
 
-def adv_training(model, train_loader, test_loader, args):
+def adv_training(model, train_loader, validation_loader, test_loader, args):
     # Initialize the optimizer and the scheduler
     optimizer, scheduler = configure_optimizers(model, train_loader, args)
     # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
@@ -115,7 +115,7 @@ def adv_training(model, train_loader, test_loader, args):
     else:
         image_size = 224    
     clean_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
-
+    val_best_accuracy = 0
     for epoch in range(args.max_epochs):
         if re_introduce_cur_prob < args.re_introduce_prob:
             re_introduce_cur_prob += re_introduce_prob_step_size
@@ -192,11 +192,40 @@ def adv_training(model, train_loader, test_loader, args):
         max_epsilon = epsilons_list.max().item()
         mean_epsilon = epsilons_list.mean().item()
 
+        # Validation epoch each epoch to evaluate the model and save the best model.
+        model.eval()
+        validation_error_samples = 0
+        validation_samples_counter = 0
+        for batch in tqdm(validation_loader, desc=f'Validation epoch {epoch+1}'):
+            indices, epsilons, val_x, val_y = batch
+            val_x, val_y = x.to(args.device), y.to(args.device)
+            validation_samples_counter += val_x.shape[0]
+            val_x_pert = PGD(model, val_x, val_y, args.max_epsilon, args)
+            y_score = model(val_x_pert)
+            y_pred = torch.argmax(y_score, dim=1)
+            incorrect = y_pred!=val_y
+            validation_error_samples += incorrect.sum().item()
+            del val_x, x_pert, val_y
+            # torch.cuda.empty_cache()
+        validation_accuracy = 1 - validation_error_samples/validation_samples_counter
+        if validation_accuracy > val_best_accuracy:
+            val_best_accuracy = validation_accuracy
+            print(f"New best model found with validation accuracy of {val_best_accuracy*100}%!")
+            print("Saving model...")
+            torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
+            print(f"Model saved at {args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
+            # torch.save(model.state_dict(), f"{args.save_dir}/best_model.pth")
+        wandb.log({
+                    "Validation epochs accuracy": validation_accuracy*100,
+                    "Validation best accuracy": val_best_accuracy*100,
+                    "Epoch": epoch+1})
+        print(f"Epoch {epoch+1}: Validation Accuracy: {validation_accuracy*100}%, Best Validation Accuracy: {val_best_accuracy*100}%")
+
         # Eval epoch for each 5 epochs
         if epoch%5==0:
-            model.eval()
             test_error_samples = 0
             test_samples_counter = 0
+            test_loss_pert = 0
             for batch in tqdm(test_loader, desc=f'Eval epoch {epoch+1}'):
                 indices, epsilons, x, y = batch
                 x, y = x.to(args.device), y.to(args.device)
@@ -204,17 +233,19 @@ def adv_training(model, train_loader, test_loader, args):
                 x_pert = PGD(model, x, y, args.max_epsilon, args)
                 # with torch.cuda.amp.autocast():
                 y_score = model(x_pert)
+                test_loss_pert += F.cross_entropy(y_score, y).item()
                 x_pert.to('cpu')
                 y_pred = torch.argmax(y_score, dim=1)
                 incorrect = y_pred!=y
                 test_error_samples += incorrect.sum().item()
                 del x, x_pert, y
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()
 
             test_accuracy = 1 - test_error_samples/test_samples_counter
-            print(f"Epoch {epoch+1}: Test Accuracy: {test_accuracy*100}%")
+            print(f"Epoch {epoch+1}: Test Accuracy: {test_accuracy*100}%, Test Loss: {test_loss_pert/len(test_loader)}")
             wandb.log({
                         "Test epochs accuracy": test_accuracy*100,
+                        "Test epochs loss": test_loss_pert/len(test_loader),
                        "Epoch": epoch+1})
         if args.agnostic_loss:
             wandb.log({"Train epochs targeted loss": loss_targeted_epoch/len(train_loader),
@@ -241,5 +272,5 @@ def adv_training(model, train_loader, test_loader, args):
     #     save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
     # if not os.path.exists(save_dir):
     #     os.makedirs(save_dir)
-    torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
+    # torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
         

@@ -75,8 +75,8 @@ def seed_worker(worker_id):
 
 def load_dataloaders(args, seed:int = 42):
     batch_size = args.batch_size
-    g = torch.Generator()
-    g.manual_seed(seed)
+    g = torch.Generator().manual_seed(seed)
+    # g.manual_seed(seed)
     image_size = 32
     if 'wide' in args.model_name.lower():
         image_size = 32
@@ -107,11 +107,15 @@ def load_dataloaders(args, seed:int = 42):
         # ])
     # train_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
     train_dataset = datasets.CIFAR10(root="./data", train=True, transform=train_transform, download=True)
-    val_dataset = datasets.CIFAR10(root="./data", train=False, transform=test_transform, download=True)
+    test_dataset = datasets.CIFAR10(root="./data", train=False, transform=test_transform, download=True)
 
-    train_ds = DatasetWithMeta(train_dataset)
-    val_ds = DatasetWithMeta(val_dataset)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=24, pin_memory=True,
+    # Split train_ds to train_ds and val_ds, with a ratio of 10% of the original train_ds size.
+    train_ds, validation_ds = torch.utils.data.random_split(train_dataset, [0.9, 0.1], generator=g)
+    train_ds = DatasetWithMeta(train_ds)
+    validation_ds = DatasetWithMeta(validation_ds)
+    test_ds = DatasetWithMeta(test_dataset)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=args.cpu_num, pin_memory=True,
                               worker_init_fn=seed_worker, generator=g)
-    test_loader = DataLoader(val_ds, batch_size=int(batch_size/2), shuffle=True, num_workers=24, pin_memory=True)
-    return train_loader, test_loader
+    test_loader = DataLoader(test_ds, batch_size=int(batch_size/2), shuffle=False, num_workers=args.cpu_num, pin_memory=True)
+    validation_loader = DataLoader(validation_ds, batch_size=int(batch_size/2), shuffle=False, num_workers=args.cpu_num, pin_memory=True)
+    return train_loader, validation_loader, test_loader
