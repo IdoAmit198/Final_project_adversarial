@@ -8,11 +8,11 @@ def get_args(description=""):
     parser.add_argument('-d', '--dataset',
                         choices=['cifar10', 'cifar100', 'flowers102', 'mnist', 'imagenet'],
                         help='Give the dataset name from the choices. Currently, only Cifar-10 is supported.', default='cifar10')
-    parser.add_argument('-m', '--model_name', choices=['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'resnet50'] ,default='resnet18')
-    parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='ADAM')
+    parser.add_argument('-m', '--model_name', choices=['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'preact_resnet18', 'resnet50'] ,default='preact_resnet18')
+    parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='SGD')
     parser.add_argument('--scheduler', type=str, choices=['MultiStepLR', 'WarmupCosineLR'], help='The scheduler type for the learning rate.', default='WarmupCosineLR')
     parser.add_argument('--warmup_ratio', type=float, default=0.1, help='The warmup ratio for the WarmupCosineLR scheduler. A float between 0 and 1.')
-    parser.add_argument('-e', '--max_epochs', type=int, default=200, help='Give number of epochs for training')
+    parser.add_argument('-e', '--max_epochs', type=int, default=150, help='Give number of epochs for training')
     parser.add_argument('--pgd_num_steps', type=int, default=10, help='Number of PGD training iterations')
     parser.add_argument('--pgd_step_size_factor', type=float, default=1.0, help='Step size factor for PGD training')
     parser.add_argument('--max_epsilon', type=int, default=8, help='Maximum epsilon value for adaptive adversarial training.\n\
@@ -20,9 +20,9 @@ def get_args(description=""):
     parser.add_argument('--epsilon_step_size', type=float, default=0.005, help='Epsilon step increcement for adaptive adversarial training')
     parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')
     # We aim to use a pre-defined scheduler which lower by 10 factor at 80, 140, 180.
-    parser.add_argument('-bs', '--batch_size', type=int, default=32,
+    parser.add_argument('-bs', '--batch_size', type=int, default=128,
                         help='Batch size.')
-    parser.add_argument('-lr', '--learning_rate', default=1e-1, type=float, help='learning rate for training')
+    parser.add_argument('-lr', '--learning_rate', default=2e-1, type=float, help='learning rate for training')
     parser.add_argument('-wd', '--weight_decay', default=5e-4, type=float, help='weight decay for training')
     parser.add_argument("--momentum", default=0.9, type=float, help="SGD Momentum.")
     parser.add_argument('-tm', '--train_method', choices=['train','adaptive', 're_introduce', 'eval'], help='Training method. \

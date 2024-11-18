@@ -78,7 +78,7 @@ def load_dataloaders(args, seed:int = 42):
     g = torch.Generator().manual_seed(seed)
     # g.manual_seed(seed)
     image_size = 32
-    if 'wide' in args.model_name.lower():
+    if 'wide' in args.model_name.lower() or 'preact' in args.model_name.lower():
         image_size = 32
     else:
         image_size = 224    

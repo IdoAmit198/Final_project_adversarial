@@ -4,11 +4,13 @@ import os
 from tqdm import tqdm
 from utils.args import get_args
 from utils.models import wide_resnet
+from utils.models.preact_resnet import PreActResNet18 
 import torch
 from torch import nn
 import torchvision
 from utils.data import load_dataloaders
 from adv_train import adv_training, adv_eval
+from torch.cuda.amp import GradScaler
 
 import pandas as pd
 import re
@@ -39,10 +41,12 @@ if __name__ == '__main__':
     num_classes=10
     if 'wide' in args.model_name.lower():
         model = getattr(wide_resnet, args.model_name)(num_classes=num_classes)
+    elif 'preact' in args.model_name.lower():
+        model = PreActResNet18()
     else:
         model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
     model = model.to(args.device)
-
+    
     if not args.eval_epsilons:
         # wanbd logging initialization
         if args.optimizer == 'Adam':
@@ -70,7 +74,7 @@ if __name__ == '__main__':
         wandb.define_metric("train_lr", step_metric="Epoch")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
-        save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}"
+        save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}"
         if os.path.exists(save_dir) and args.sanity_check:
             print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
             additional_folder = 'sanity_check_2-new/'
@@ -81,6 +85,8 @@ if __name__ == '__main__':
         with open(f'{save_dir}/args.json', 'w') as f:
             json.dump(args.__dict__, f, indent=2)
         print(f"args saved in {save_dir}/args.json")
+        # Initialize scaler for amp
+        args.scaler = GradScaler()
         # Actual training
         adv_training(model, train_loader, validation_loader, test_loader, args)
         wandb.finish()
@@ -118,6 +124,8 @@ if __name__ == '__main__':
             eval_results = []
             train_results = []
         args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
+        # Initialize scaler for amp
+        args.scaler = GradScaler()
         for epsilon in tqdm(epsilons_list, desc=f'Eval'):
             test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if acc_eval:
