@@ -251,8 +251,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 # with torch.cuda.amp.autocast():
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_score = model(x_pert)
-                    test_loss_pert += F.cross_entropy(y_score, y)
-                test_loss_pert = args.scaler.scale(test_loss_pert).item()
+                    test_loss_pert += F.cross_entropy(y_score, y).item()
+                # test_loss_pert = args.scaler.scale(test_loss_pert).item()
                 x_pert.to('cpu')
                 y_pred = torch.argmax(y_score, dim=1)
                 incorrect = y_pred!=y
