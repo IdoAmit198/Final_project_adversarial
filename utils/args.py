@@ -20,7 +20,7 @@ def get_args(description=""):
     parser.add_argument('--epsilon_step_size', type=float, default=0.005, help='Epsilon step increcement for adaptive adversarial training')
     parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')
     # We aim to use a pre-defined scheduler which lower by 10 factor at 80, 140, 180.
-    parser.add_argument('-bs', '--batch_size', type=int, default=64,
+    parser.add_argument('-bs', '--batch_size', type=int, default=32,
                         help='Batch size.')
     parser.add_argument('-lr', '--learning_rate', default=1e-1, type=float, help='learning rate for training')
     parser.add_argument('-wd', '--weight_decay', default=5e-4, type=float, help='weight decay for training')

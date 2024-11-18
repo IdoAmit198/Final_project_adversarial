@@ -56,13 +56,18 @@ if __name__ == '__main__':
         wandb.define_metric("Epoch")
         wandb.define_metric("Train epochs loss", step_metric="Epoch")
         wandb.define_metric("Train epochs accuracy", step_metric="Epoch")
+        wandb.define_metric("Train Clean epochs accuracy", step_metric="Epoch")
         wandb.define_metric("Test epochs accuracy", step_metric="Epoch")
         wandb.define_metric("Test epochs loss", step_metric="Epoch")
+        wandb.define_metric("Train epochs clean loss", step_metric="Epoch")
+        wandb.define_metric("Train epochs targeted loss", step_metric="Epoch")
+        wandb.define_metric("Validation epochs accuracy", step_metric="Epoch")
+        wandb.define_metric("Validation best accuracy", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/min_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/max_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/mean_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/re_introduce_cur_prob", step_metric="Epoch")
-        wandb.define_metric("Train lr", step_metric="Epoch")
+        wandb.define_metric("train_lr", step_metric="Epoch")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
         save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}"

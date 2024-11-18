@@ -3,6 +3,7 @@ import torch
 from torch.nn import functional as F
 import wandb
 import os
+from torch.cuda.amp import GradScaler, autocast
 
 from torchvision.transforms import v2
 from utils.data import Cutout 
@@ -16,10 +17,12 @@ def PGD(model, x, y, epsilons, args, targeted=False):
     x_pert = x.clone().detach().requires_grad_(True)
     x_pert = x_pert + (torch.zeros_like(x_pert).uniform_(-1,1)*epsilons)
     for i in range(args.pgd_num_steps):
+        # with autocast(device_type='cuda', dtype=torch.float16):
         y_score = model(x_pert)
         # print(f"x_pert shape: {x_pert.shape}")
         # print(f"y_score shape: {y_score.shape} , y shape: {y.shape}")
         loss = F.cross_entropy(y_score, y)
+        # scaled_loss = args.scaler.scale(loss)
         grad = torch.autograd.grad(loss.mean(), [x_pert])[0].detach()
         x_grad = torch.sign(grad)
         pgd_step_size = epsilons*args.pgd_step_size_factor
@@ -97,6 +100,7 @@ def configure_optimizers(model, train_dataloader, args):
 def adv_training(model, train_loader, validation_loader, test_loader, args):
     # Initialize the optimizer and the scheduler
     optimizer, scheduler = configure_optimizers(model, train_loader, args)
+    scaler = GradScaler()
     # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
     # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 140, 180], gamma=0.1)
     # Initialize a linear scheduler for the probability to re-introudce smaller epsilon values.
@@ -126,6 +130,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         total_loss_epoch = 0
         train_samples_counter = 0
         train_error_samples = 0
+        clean_error_samples = 0
         # Training epoch
         for batch in tqdm(train_loader, desc=f'Training epoch {epoch+1}'):
             indices, epsilons, x, y = batch
@@ -166,6 +171,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 loss_targeted_epoch += loss_targeted.item()
             else:
                 total_loss = (loss_pert + loss_clean)/2
+            clean_error_samples += (torch.argmax(y_clean_score, dim=1) != y).sum().item()
             loss_clean_epoch += loss_clean.item()
             total_loss_epoch += total_loss.item()
             y_pred = torch.argmax(y_score, dim=1)
@@ -186,6 +192,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             torch.cuda.empty_cache()
         ## Calculate accuracy
         train_accuracy = 1 - train_error_samples/train_samples_counter
+        train_clean_accuracy = 1 - clean_error_samples/train_samples_counter
         print(f"Epoch {epoch+1}: Train total Loss: {total_loss_epoch/len(train_loader)}, Train Accuracy: {train_accuracy*100}%")
         epsilons_list = train_loader.dataset.epsilons
         min_epsilon = epsilons_list.min().item()
@@ -198,7 +205,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         validation_samples_counter = 0
         for batch in tqdm(validation_loader, desc=f'Validation epoch {epoch+1}'):
             indices, epsilons, val_x, val_y = batch
-            val_x, val_y = x.to(args.device), y.to(args.device)
+            val_x, val_y = val_x.to(args.device), val_y.to(args.device)
             validation_samples_counter += val_x.shape[0]
             val_x_pert = PGD(model, val_x, val_y, args.max_epsilon, args)
             y_score = model(val_x_pert)
@@ -215,10 +222,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
             print(f"Model saved at {args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
             # torch.save(model.state_dict(), f"{args.save_dir}/best_model.pth")
-        wandb.log({
-                    "Validation epochs accuracy": validation_accuracy*100,
-                    "Validation best accuracy": val_best_accuracy*100,
-                    "Epoch": epoch+1})
         print(f"Epoch {epoch+1}: Validation Accuracy: {validation_accuracy*100}%, Best Validation Accuracy: {val_best_accuracy*100}%")
 
         # Eval epoch for each 5 epochs
@@ -247,6 +250,10 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                         "Test epochs accuracy": test_accuracy*100,
                         "Test epochs loss": test_loss_pert/len(test_loader),
                        "Epoch": epoch+1})
+        # wandb.log({
+        #             "Validation epochs accuracy": validation_accuracy*100,
+        #             "Validation best accuracy": val_best_accuracy*100,
+        #             "Epoch": epoch+1})
         if args.agnostic_loss:
             wandb.log({"Train epochs targeted loss": loss_targeted_epoch/len(train_loader),
                         "Epoch": epoch+1})
@@ -256,6 +263,10 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         wandb.log({"Train epochs loss": epoch_loss_pert/len(train_loader),
                    "Train epochs clean loss": loss_clean_epoch/len(train_loader),
                    "Train epochs accuracy": train_accuracy*100,
+                   "Train Clean epochs accuracy": train_clean_accuracy*100,
+                   "Validation epochs accuracy": validation_accuracy*100,
+                   "Validation best accuracy": val_best_accuracy*100,
+                    # "Epoch": epoch+1})
                    "train_lr": scheduler.get_last_lr()[0],
                    "Epsilons_metrics/min_epsilon": min_epsilon,
                     "Epsilons_metrics/max_epsilon": max_epsilon,
