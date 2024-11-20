@@ -2,18 +2,23 @@ from tqdm import tqdm
 import torch
 from torch.nn import functional as F
 import wandb
-import os
-from torch.cuda.amp import GradScaler, autocast
+# import os
+# from torch.cuda.amp import GradScaler, autocast
 
 from torchvision.transforms import v2
 from utils.data import Cutout 
 
+import pytz
+from datetime import datetime
 
 from utils.uncertainty_metrics import log_uncertainty
 from utils.warm_schduler import WarmupCosineLR
 
 def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False):
     model.eval()
+    # Freeze model for the PGD attack
+    for p in model.parameters():
+        p.requires_grad = False
     x_pert = x.clone().detach().requires_grad_(True)
     x_pert = x_pert + (torch.zeros_like(x_pert).uniform_(-1,1)*epsilons)
     for i in range(pgd_num_steps):
@@ -36,7 +41,12 @@ def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False):
             x_pert = x_pert - pgd_grad_step
         x_pert = torch.max(torch.min(x_pert, x+epsilons), x-epsilons)
         x_pert = torch.clamp(x_pert, 0, 1)
-        # args.scaler.update()
+        # detach x_pert to avoid increasing of computation graph, and require grad since `detach` removes the grad requirement.
+        x_pert = x_pert.detach().requires_grad_(True)
+        
+    # Unfreeze model after the PGD attack
+    for p in model.parameters():
+        p.requires_grad = True
     return x_pert
 
 def epsilon_clamp(epsilons, max_epsilon):
@@ -53,6 +63,9 @@ def adv_eval(model, test_loader, args, evaluated_epsilon, uncertainty_evaluation
         x, y = x.to(args.device), y.to(args.device)
         test_samples_counter += x.shape[0]
         x_pert = PGD(model, x, y, evaluated_epsilon, 100, args)
+        # Freeze model for evaluation after PGD unfreezed it.
+        for p in model.parameters():
+            p.requires_grad = False
         # Model isn't training so if we don't train a PGD attack, no need for gradients.
         with torch.no_grad():
             with torch.autocast(device_type='cuda', dtype=torch.float16):
@@ -103,6 +116,8 @@ def configure_optimizers(model, train_dataloader, args):
     return optimizer, scheduler
 
 def adv_training(model, train_loader, validation_loader, test_loader, args):
+    # For date and time logs
+    timezone = pytz.timezone('Asia/Jerusalem')
     # Initialize the optimizer and the scheduler
     optimizer, scheduler = configure_optimizers(model, train_loader, args)
     
@@ -137,7 +152,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         train_error_samples = 0
         clean_error_samples = 0
         # Training epoch
-        for batch in tqdm(train_loader, desc=f'Training epoch {epoch+1}'):
+        for batch in tqdm(train_loader, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Training epoch {epoch+1}'):
             indices, epsilons, x, y = batch
             x, y = x.to(args.device), y.to(args.device)
             train_samples_counter += x.shape[0]
@@ -216,7 +231,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         model.eval()
         validation_error_samples = 0
         validation_samples_counter = 0
-        for batch in tqdm(validation_loader, desc=f'Validation epoch {epoch+1}'):
+        for batch in tqdm(validation_loader, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Validation epoch {epoch+1}'):
             indices, epsilons, val_x, val_y = batch
             val_x, val_y = val_x.to(args.device), val_y.to(args.device)
             validation_samples_counter += val_x.shape[0]
@@ -243,7 +258,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             test_error_samples = 0
             test_samples_counter = 0
             test_loss_pert = 0
-            for batch in tqdm(test_loader, desc=f'Eval epoch {epoch+1}'):
+            for batch in tqdm(test_loader, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Eval epoch {epoch+1}'):
                 indices, epsilons, x, y = batch
                 x, y = x.to(args.device), y.to(args.device)
                 test_samples_counter += x.shape[0]

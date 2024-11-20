@@ -6,7 +6,6 @@ from utils.args import get_args
 from utils.models import wide_resnet
 from utils.models.preact_resnet import PreActResNet18 
 import torch
-from torch import nn
 import torchvision
 from utils.data import load_dataloaders
 from adv_train import adv_training, adv_eval
@@ -19,7 +18,7 @@ import numpy as np
 import random
 
 import wandb
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 if __name__ == '__main__':
@@ -47,13 +46,13 @@ if __name__ == '__main__':
         model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
     model = model.to(args.device)
     
+    timezone = pytz.timezone('Asia/Jerusalem')
     if not args.eval_epsilons:
         # wanbd logging initialization
         if args.optimizer == 'Adam':
             # TODO: Refactor later to better practice.
             args.learning_rate = 1e-3
         args.log_name = f'{args.model_name}_train method_{args.train_method}_agnostic_loss_{args.agnostic_loss}_seed_{args.seed}_max epsilon_{int(args.max_epsilon*255)}'
-        timezone = pytz.timezone('Asia/Jerusalem')
         args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
         wandb.init(project="Adversarial-adaptive-project", name=f'{args.date_stamp}_{args.log_name}', entity = "ido-shani-proj", config=args)
         wandb.define_metric("step")
@@ -126,7 +125,7 @@ if __name__ == '__main__':
         args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
         # Initialize scaler for amp
         args.scaler = GradScaler()
-        for epsilon in tqdm(epsilons_list, desc=f'Eval'):
+        for epsilon in tqdm(epsilons_list, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Eval'):
             test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if acc_eval:
                 train_results.append(adv_eval(model, train_loader, args, epsilon/255))
