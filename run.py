@@ -125,7 +125,8 @@ if __name__ == '__main__':
         args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
         # Initialize scaler for amp
         args.scaler = GradScaler()
-        for epsilon in tqdm(epsilons_list, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Eval'):
+        time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
+        for epsilon in tqdm(epsilons_list, desc=f'{time}Eval'):
             test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if acc_eval:
                 train_results.append(adv_eval(model, train_loader, args, epsilon/255))
@@ -133,6 +134,7 @@ if __name__ == '__main__':
                 print(f"Evaluated epsilon:{epsilon} , Test Accuracy: {eval_results[-1]*100}% , Train Accuracy: {train_results[-1]*100}%")
             if args.eval_uncertainty:
                 uncertainty_dicts_list.append(uncertainty_dict)
+            time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
 
         if acc_eval:
             df = pd.DataFrame(list(zip(epsilons_list, eval_results, train_results)), columns=['epsilon', 'eval_results', 'train_results'])

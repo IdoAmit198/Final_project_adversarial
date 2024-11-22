@@ -141,6 +141,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
     clean_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
     val_best_accuracy = 0
     for epoch in range(args.max_epochs):
+        time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         if re_introduce_cur_prob < args.re_introduce_prob:
             re_introduce_cur_prob += re_introduce_prob_step_size
         
@@ -152,7 +153,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         train_error_samples = 0
         clean_error_samples = 0
         # Training epoch
-        for batch in tqdm(train_loader, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Training epoch {epoch+1}'):
+        for batch in tqdm(train_loader, desc=f'{time}Training epoch {epoch+1}'):
             indices, epsilons, x, y = batch
             x, y = x.to(args.device), y.to(args.device)
             train_samples_counter += x.shape[0]
@@ -216,8 +217,9 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             scheduler.step()
             args.scaler.update()
             # Empty cache
-            del x, x_pert, y
-            torch.cuda.empty_cache()
+            # del x, x_pert, y
+            # torch.cuda.empty_cache()
+            time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         ## Calculate accuracy
         train_accuracy = 1 - train_error_samples/train_samples_counter
         train_clean_accuracy = 1 - clean_error_samples/train_samples_counter
@@ -231,7 +233,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         model.eval()
         validation_error_samples = 0
         validation_samples_counter = 0
-        for batch in tqdm(validation_loader, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Validation epoch {epoch+1}'):
+        time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
+        for batch in tqdm(validation_loader, desc=f'{time}Validation epoch {epoch+1}'):
             indices, epsilons, val_x, val_y = batch
             val_x, val_y = val_x.to(args.device), val_y.to(args.device)
             validation_samples_counter += val_x.shape[0]
@@ -241,7 +244,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             y_pred = torch.argmax(y_score, dim=1)
             incorrect = y_pred!=val_y
             validation_error_samples += incorrect.sum().item()
-            del val_x, val_x_pert, val_y
+            # del val_x, val_x_pert, val_y
             # torch.cuda.empty_cache()
         validation_accuracy = 1 - validation_error_samples/validation_samples_counter
         if validation_accuracy > val_best_accuracy:
@@ -258,7 +261,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             test_error_samples = 0
             test_samples_counter = 0
             test_loss_pert = 0
-            for batch in tqdm(test_loader, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Eval epoch {epoch+1}'):
+            time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
+            for batch in tqdm(test_loader, desc=f'{time}Eval epoch {epoch+1}'):
                 indices, epsilons, x, y = batch
                 x, y = x.to(args.device), y.to(args.device)
                 test_samples_counter += x.shape[0]
