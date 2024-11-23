@@ -25,7 +25,15 @@ if __name__ == '__main__':
     print("Started")
 
     args = get_args(description='Adversarial training')
-    
+    # adjust pgd_steps_size according to a paper:
+    # GradAlign https://arxiv.org/pdf/2007.02617
+    if args.pgd_num_steps == 1:
+        args.pgd_step_size_factor = 1.0
+    elif args.pgd_num_steps == 2:
+        args.pgd_step_size_factor = 0.5
+    else:
+        args.pgd_step_size_factor = 0.2
+        
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
