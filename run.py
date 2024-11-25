@@ -25,7 +25,15 @@ if __name__ == '__main__':
     print("Started")
 
     args = get_args(description='Adversarial training')
-    
+    # adjust pgd_steps_size according to a paper:
+    # GradAlign https://arxiv.org/pdf/2007.02617
+    if args.pgd_num_steps == 1:
+        args.pgd_step_size_factor = 1.0
+    elif args.pgd_num_steps == 2:
+        args.pgd_step_size_factor = 0.5
+    else:
+        args.pgd_step_size_factor = 0.2
+        
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -125,7 +133,8 @@ if __name__ == '__main__':
         args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
         # Initialize scaler for amp
         args.scaler = GradScaler()
-        for epsilon in tqdm(epsilons_list, desc=f'{datetime.now(timezone).strftime("%d/%m %H:%M - ")}Eval'):
+        time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
+        for epsilon in tqdm(epsilons_list, desc=f'{time}Eval'):
             res = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if args.eval_uncertainty:
                 test_acc, uncertainty_dict = res
@@ -137,6 +146,7 @@ if __name__ == '__main__':
                 print(f"Evaluated epsilon:{epsilon} , Test Accuracy: {eval_results[-1]*100}% , Train Accuracy: {train_results[-1]*100}%")
             if args.eval_uncertainty:
                 uncertainty_dicts_list.append(uncertainty_dict)
+            time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
 
         if acc_eval:
             df = pd.DataFrame(list(zip(epsilons_list, eval_results, train_results)), columns=['epsilon', 'eval_results', 'train_results'])

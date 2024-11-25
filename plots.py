@@ -108,10 +108,17 @@ def Plotly_plot_data(csv_files:list, y_label_column:str, specific_epsilons:list[
             model_name = file_dirs[1]
             seed = file_dirs[2] if 'sanity_check' not in file else file_dirs[3]
             eval_trained_epsilon = re.search(r'[\d][\d]?', file_dirs[-1]).group()
-            whether_agnostic = 'True' if 'True' in file_dirs[-2] else 'False'
+            target_agnostic_dir = [dir for dir in file_dirs if 'agnostic_loss_' in dir][0]
+            whether_agnostic = 'True' if 'True' in target_agnostic_dir else 'False'
             res = [i for i in range(len(file_dirs[-3])) if file_dirs[-3].startswith('_', i)]
-            train_method = file_dirs[-3][res[1]+1:]
-            train_method = train_method if train_method != 'train' else 'Vanilla'
+            train_method = None
+            if 'adaptive' in file:
+                train_method = 'adaptive'
+            elif 're_introduce' in file:
+                train_method = 're_introduce'
+            elif 'train' in file:
+                train_method = 'vanilla'
+            # train_method = train_method if train_method != 'train' else 'Vanilla'
             if specific_epsilons is not None and int(eval_trained_epsilon) not in specific_epsilons:
                 continue
             if specific_method is not None and train_method != specific_method:
@@ -143,7 +150,9 @@ def Plotly_plot_data(csv_files:list, y_label_column:str, specific_epsilons:list[
         xaxis=dict(tickmode='linear', tick0=0, dtick=4),
         yaxis=dict(range=[0, 100], dtick=10),
         # legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+        legend=dict(orientation="h", yanchor="top", y=-0.3, xanchor="center", x=0.5,
+                bgcolor='rgba(255, 255, 255, 0.5)', bordercolor='Black', borderwidth=1),
+        margin=dict(l=40, r=40, t=40, b=100)
     )
 
     filename_suffix = f'_trained_on_{str(specific_epsilons)[1:-1]}' if specific_epsilons is not None else ''
@@ -255,5 +264,6 @@ if __name__ == '__main__':
     # Testing sanity case
     # matches = ['saved_models/resnet18/sanity_check/seed_42/train_method_re_introduce/agnostic_loss_False/eval_accuracy_32.csv']
     # plot_data(matches, 'eval_results', specific_method='adaptive', specific_epsilons=[32, 64])
+    matches = [match for match in matches if 'WideResNet' not in match]
     Plotly_plot_data(matches, 'eval_results', specific_method='adaptive', specific_epsilons=[32, 64])
     # Rearrange_PAT_csv_files()
