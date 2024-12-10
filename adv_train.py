@@ -265,7 +265,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         ## Calculate accuracy
         train_accuracy = 1 - train_error_samples/train_samples_counter
-        if arg.use_clean_loss:
+        if args.use_clean_loss:
             train_clean_accuracy = 1 - clean_error_samples/train_samples_counter
         print(f"Epoch {epoch+1}: Train total Loss: {total_loss_epoch/len(train_loader)}, Train Accuracy: {train_accuracy*100}%")
         epsilons_list = train_loader.dataset.epsilons

@@ -106,23 +106,40 @@ def load_dataloaders(args, seed:int = 42):
         if 'imagenet100' == args.dataset:
             # Identify classes to keep: labels divisible by 10
             filtered_classes = [class_name for idx, class_name in enumerate(train_dataset.classes) if idx % 10 == 0]
+            filtered_class_indices = sorted({train_dataset.class_to_idx[class_name] for class_name in filtered_classes})
+            label_mapping = {old_label: new_label for new_label, old_label in enumerate(filtered_class_indices)}
 
-            # Map class indices to keep
-            filtered_class_indices = {train_dataset.class_to_idx[class_name] for class_name in filtered_classes}
-
-            # Filter training and validation datasets
+            # Filter indices first
             train_filtered_indices = [
-                idx for idx, (_, label) in enumerate(train_dataset.samples)
-                if label in filtered_class_indices
+                idx for idx, (_, label) in enumerate(train_dataset.samples) 
+                if label in label_mapping
             ]
             test_filtered_indices = [
                 idx for idx, (_, label) in enumerate(test_dataset.samples)
-                if label in filtered_class_indices
+                if label in label_mapping
             ]
 
-            # Create filtered datasets
-            train_dataset = Subset(train_dataset, train_filtered_indices)
-            test_dataset = Subset(test_dataset, test_filtered_indices)
+            # Create new samples lists with remapped labels
+            train_dataset.samples = [
+                (path, label_mapping[label]) 
+                for path, label in train_dataset.samples
+                if label in label_mapping
+            ]
+            test_dataset.samples = [
+                (path, label_mapping[label])
+                for path, label in test_dataset.samples
+                if label in label_mapping
+            ]
+
+            # Update targets
+            train_dataset.targets = [label for _, label in train_dataset.samples]
+            test_dataset.targets = [label for _, label in test_dataset.samples]
+
+            # Print debug info
+            print(f"Filtered train samples: {len(train_dataset.samples)}")
+            print(f"Filtered test samples: {len(test_dataset.samples)}")
+            print(f"Label mapping size: {len(label_mapping)}")
+
 
     elif 'cifar10' == args.dataset:
         train_dataset = datasets.CIFAR10(root="./data", train=True, transform=train_transform, download=True)

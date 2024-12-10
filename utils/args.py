@@ -13,7 +13,7 @@ def get_args(description=""):
                         help='Give the dataset name from the choices. Currently, only Cifar-10 is supported.', default='imagenet100')
     parser.add_argument('--augment', action='store_true', help='Whether to augment the training data')
     parser.add_argument('--use_clean_loss', action='store_true', help='Whether to use clean loss')
-    parser.add_argument('-m', '--model_name', choices=['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'preact_resnet18', 'resnet50'] ,default='preact_resnet18')
+    parser.add_argument('-m', '--model_name', choices=['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'resnet34', 'preact_resnet18', 'resnet50'] ,default='resnet18')
     parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='SGD')
     parser.add_argument('--scheduler', type=str, choices=['MultiStepLR', 'WarmupCosineLR', 'CyclicLR'], help='The scheduler type for the learning rate.', default='WarmupCosineLR')
     parser.add_argument('--warmup_ratio', type=float, default=0.1, help='The warmup ratio for the WarmupCosineLR scheduler. A float between 0 and 1.')
