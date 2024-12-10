@@ -87,7 +87,7 @@ def adv_eval(model, test_loader, args, evaluated_epsilon, uncertainty_evaluation
     if uncertainty_evaluation:
         uncertainty_dict = log_uncertainty(samples_certainties, args.rc_curve_save_pth)
         return test_accuracy, uncertainty_dict
-    return test_accuracy
+    return test_accuracy, None
 
 def configure_optimizers(model, train_dataloader, args):
     if args.optimizer == 'SGD':
@@ -110,7 +110,9 @@ def configure_optimizers(model, train_dataloader, args):
     if args.scheduler == "WarmupCosineLR":
         scheduler = WarmupCosineLR(optimizer, warmup_epochs=total_steps * args.warmup_ratio, max_epochs=total_steps)
     elif args.scheduler == "MultiStepLR":
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 140, 180], gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[total_steps*0.4, total_steps*0.7, total_steps*0.9], gamma=0.1)
+    elif args.scheduler == "CyclicLR":
+        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=0, max_lr=0.3, step_size_up=total_steps / 2, step_size_down=total_steps / 2)
     else:
         raise NotImplementedError(f"Scheduler {args.scheduler} is not implemented.")
     return optimizer, scheduler
@@ -125,8 +127,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
     # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 140, 180], gamma=0.1)
     # Initialize a linear scheduler for the probability to re-introudce smaller epsilon values.
     # It rise steadily from 0 to args.re_introduce_prob in the first half of the training and then stays constant.
-    re_introduce_prob_step_size = 2*args.re_introduce_prob/args.max_epochs
-    re_introduce_cur_prob = 0
+    # re_introduce_prob_step_size = 2*args.re_introduce_prob/args.max_epochs
+    # re_introduce_cur_prob = 0
     # Actual training+eval loop. We make an evaluation every 5 epochs.
     
     # Initialize augmentation transformation for clean samples:
@@ -142,8 +144,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
     val_best_accuracy = 0
     for epoch in range(args.max_epochs):
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
-        if re_introduce_cur_prob < args.re_introduce_prob:
-            re_introduce_cur_prob += re_introduce_prob_step_size
+        # if re_introduce_cur_prob < args.re_introduce_prob:
+        #     re_introduce_cur_prob += re_introduce_prob_step_size
         
         epoch_loss_pert = 0
         loss_targeted_epoch = 0
@@ -158,17 +160,47 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             x, y = x.to(args.device), y.to(args.device)
             train_samples_counter += x.shape[0]
             epsilons_to_pgd = args.max_epsilon
-            if args.train_method == 'adaptive' or args.train_method == 're_introduce':
+            if args.train_method in ['adaptive', 're_introduce']:
                 epsilons += args.epsilon_step_size
                 epsilons_tensor = epsilons.clone().to(args.device).requires_grad_(False)
                 if args.train_method == 're_introduce':
-                    # Sample a random boolean tensor of the len of epsilon where probability to get 1 is 'p'
-                    # p = 0.5
-                    random_bool = torch.rand(len(epsilons_tensor), device=args.device) < re_introduce_cur_prob
-                    # Sample a random uniform tensor of the len of epsilons
-                    random_uniform = torch.rand(len(epsilons_tensor), device=args.device)
-                    random_uniform *= epsilons_tensor*random_bool
-                    epsilons_tensor -= random_uniform
+                    # mask_matrix = torch.zeros([epsilons_tensor.shape[0], args.max_epsilon], device=args.device)
+                    # In each row i in mask_matrix, put 1 in all the columns up to the entry epsilons_tensor[i]
+                    # For example, if epsilons_tensor[i] = 3, then mask_matrix[i, :3] = 1
+                    cols = torch.arange(0, 255*args.max_epsilon+1, device=args.device)
+                    # Compare and generate the mask
+                    mask_matrix = (cols <= 255*epsilons_tensor.unsqueeze(1)).int()
+                    # Create a matrix where each row represent the geometric distribution and each entry has the probability for that given number to be picked according to a geomrtric distribution.
+                    # Make it tensorised
+                    p = 0.1  # Adjust the probability of success as needed,  the paramter for geometric distribution
+                    # Compute the geometric probabilities for all values in the range [1, 64]
+                    cols = torch.arange(0, 255*args.max_epsilon+1)  # 1-indexed range
+                    geometric_probabilities = p * (1 - p) ** (cols - 1)  # Probability for each column
+
+                    # Expand geometric probabilities to match the rows of the mask matrix
+                    probability_matrix = geometric_probabilities.unsqueeze(0).repeat(epsilons_tensor.shape[0], 1).to(args.device)
+                    # print(probability_matrix)
+                    probability_matrix *= mask_matrix
+
+                    # Normalize each row to ensure the probabilities sum to 1
+                    row_sums = probability_matrix.sum(dim=1, keepdim=True)
+                    normalized_probability_matrix = probability_matrix/row_sums
+                    
+                    # Sample from the normalized probability matrix,
+                    # Add 1 to avoid using no pertubatino,
+                    # And divide by 255 to get the epsilon value.
+                    samples = (torch.multinomial(normalized_probability_matrix, num_samples=1))/255
+                    # epsilons_tensor -= samples.squeeze(1)
+                    epsilons_tensor = samples.squeeze(1)
+
+                    # Legacy code
+                    # # Sample a random boolean tensor of the len of epsilon where probability to get 1 is 'p'
+                    # # p = 0.5
+                    # random_bool = torch.rand(len(epsilons_tensor), device=args.device) < re_introduce_cur_prob
+                    # # Sample a random uniform tensor of the len of epsilons
+                    # random_uniform = torch.rand(len(epsilons_tensor), device=args.device)
+                    # random_uniform *= epsilons_tensor*random_bool
+                    # epsilons_tensor -= random_uniform
                 epsilons_tensor = epsilons_tensor.unsqueeze(1).unsqueeze(1).unsqueeze(1)
                 epsilons_to_pgd = epsilons_tensor
             x_pert = PGD(model, x, y, epsilons_to_pgd, args.pgd_num_steps, args)
@@ -179,28 +211,39 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 y_targeted[y_targeted>=y] += 1
                 x_targeted_pert = PGD(model, x, y_targeted, epsilons_to_pgd, args.pgd_num_steps, args, targeted=True)
             model.train()
-            x_augmented = clean_transform(x)
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 y_score = model(x_pert)
                 loss_pert = F.cross_entropy(y_score, y)
-                y_clean_score = model(x_augmented)
-                loss_clean = F.cross_entropy(y_clean_score, y)
+            if args.use_clean_loss:
+                x_augmented = clean_transform(x) if args.augment else x
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    y_clean_score = model(x_augmented)
+                    loss_clean = F.cross_entropy(y_clean_score, y)
+                scaled_loss_clean = args.scaler.scale(loss_clean)
             scaled_loss_pert = args.scaler.scale(loss_pert)
             epoch_loss_pert += loss_pert.item()
-            scaled_loss_clean = args.scaler.scale(loss_clean)
             if args.agnostic_loss:
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_score_targeted = model(x_targeted_pert)
                     loss_targeted = F.cross_entropy(y_score_targeted, y)
                 scaled_loss_targeted = args.scaler.scale(loss_targeted)
-                total_loss = (scaled_loss_pert + scaled_loss_clean + scaled_loss_targeted)/3
-                total_loss_epoch += (loss_pert + loss_clean + loss_targeted).item()/3
+                if args.use_clean_loss:
+                    total_loss = (scaled_loss_pert + scaled_loss_clean + scaled_loss_targeted)/3
+                    total_loss_epoch += (loss_pert + loss_clean + loss_targeted).item()/3
+                else:
+                    total_loss = (scaled_loss_pert + scaled_loss_targeted)/2
+                    total_loss_epoch += (loss_pert + loss_targeted).item()/2
                 loss_targeted_epoch += loss_targeted.item()
             else:
-                total_loss = (scaled_loss_pert + scaled_loss_clean)/2
-                total_loss_epoch += (loss_pert + loss_clean).item()/2
-            clean_error_samples += (torch.argmax(y_clean_score, dim=1) != y).sum().item()
-            loss_clean_epoch += loss_clean.item()
+                if args.use_clean_loss:
+                    total_loss = (scaled_loss_pert + scaled_loss_clean)/2
+                    total_loss_epoch += (loss_pert + loss_clean).item()/2
+                else:
+                    total_loss = scaled_loss_pert
+                    total_loss_epoch += loss_pert.item()
+            if args.use_clean_loss:
+                clean_error_samples += (torch.argmax(y_clean_score, dim=1) != y).sum().item()
+                loss_clean_epoch += loss_clean.item()
             y_pred = torch.argmax(y_score, dim=1)
             incorrect = (y_pred!=y).to('cpu')
             train_error_samples += incorrect.sum().item()
@@ -222,7 +265,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         ## Calculate accuracy
         train_accuracy = 1 - train_error_samples/train_samples_counter
-        train_clean_accuracy = 1 - clean_error_samples/train_samples_counter
+        if arg.use_clean_loss:
+            train_clean_accuracy = 1 - clean_error_samples/train_samples_counter
         print(f"Epoch {epoch+1}: Train total Loss: {total_loss_epoch/len(train_loader)}, Train Accuracy: {train_accuracy*100}%")
         epsilons_list = train_loader.dataset.epsilons
         min_epsilon = epsilons_list.min().item()
@@ -231,22 +275,30 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
 
         # Validation epoch each epoch to evaluate the model and save the best model.
         model.eval()
-        validation_error_samples = 0
+        validation_16_error_samples = 0
+        validation_32_error_samples = 0
         validation_samples_counter = 0
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         for batch in tqdm(validation_loader, desc=f'{time}Validation epoch {epoch+1}'):
             indices, epsilons, val_x, val_y = batch
             val_x, val_y = val_x.to(args.device), val_y.to(args.device)
             validation_samples_counter += val_x.shape[0]
-            val_x_pert = PGD(model, val_x, val_y, args.max_epsilon, 20, args)
+            val_x_pert_16 = PGD(model, val_x, val_y, 16, 20, args)
+            val_x_pert_32 = PGD(model, val_x, val_y, 32, 20, args)
             with torch.autocast(device_type='cuda', dtype=torch.float16):
-                y_score = model(val_x_pert)
-            y_pred = torch.argmax(y_score, dim=1)
-            incorrect = y_pred!=val_y
-            validation_error_samples += incorrect.sum().item()
+                y_score_16 = model(val_x_pert_16)
+                y_score_32 = model(val_x_pert_32)
+            y_pred_16 = torch.argmax(y_score_16, dim=1)
+            y_pred_32 = torch.argmax(y_score_32, dim=1)
+            incorrect_16 = y_pred_16!=val_y
+            incorrect_32 = y_pred_32!=val_y
+            validation_16_error_samples += incorrect_16.sum().item()
+            validation_32_error_samples += incorrect_32.sum().item()
             # del val_x, val_x_pert, val_y
             # torch.cuda.empty_cache()
-        validation_accuracy = 1 - validation_error_samples/validation_samples_counter
+        validation_16_accuracy = 1 - validation_16_error_samples/validation_samples_counter
+        validation_32_accuracy = 1 - validation_32_error_samples/validation_samples_counter
+        validation_accuracy = (validation_16_accuracy + validation_32_accuracy)/2
         if validation_accuracy > val_best_accuracy:
             val_best_accuracy = validation_accuracy
             print(f"New best model found with validation accuracy of {val_best_accuracy*100}%!")
@@ -289,24 +341,43 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         #             "Validation epochs accuracy": validation_accuracy*100,
         #             "Validation best accuracy": val_best_accuracy*100,
         #             "Epoch": epoch+1})
+        # if args.agnostic_loss:
+        #     wandb.log({"Train epochs targeted loss": loss_targeted_epoch/len(train_loader),
+        #                 "Epoch": epoch+1})
+        # if args.train_method == 're_introduce':
+        #     wandb.log({"Epsilons_metrics/re_introduce_cur_prob": re_introduce_cur_prob,
+        #                 "Epoch": epoch+1})
+        wandb_log_dict = {  "Train epochs loss": epoch_loss_pert/len(train_loader),
+                            # "Train epochs clean loss": loss_clean_epoch/len(train_loader),
+                            "Train epochs accuracy": train_accuracy*100,
+                            # "Train Clean epochs accuracy": train_clean_accuracy*100,
+                            "Validation epochs accuracy": validation_accuracy*100,
+                            "Validation best accuracy": val_best_accuracy*100,
+                            "train_lr": scheduler.get_last_lr()[0],
+                            "Epsilons_metrics/min_epsilon": min_epsilon,
+                            "Epsilons_metrics/max_epsilon": max_epsilon,
+                            "Epsilons_metrics/mean_epsilon": mean_epsilon,
+                            "Epoch":epoch+1
+        }
+        if args.use_clean_loss:
+            wandb_log_dict["Train epochs clean loss"] = loss_clean_epoch/len(train_loader)
+            wandb_log_dict["Train Clean epochs accuracy"] = train_clean_accuracy*100
         if args.agnostic_loss:
-            wandb.log({"Train epochs targeted loss": loss_targeted_epoch/len(train_loader),
-                        "Epoch": epoch+1})
-        if args.train_method == 're_introduce':
-            wandb.log({"Epsilons_metrics/re_introduce_cur_prob": re_introduce_cur_prob,
-                        "Epoch": epoch+1})
-        wandb.log({"Train epochs loss": epoch_loss_pert/len(train_loader),
-                   "Train epochs clean loss": loss_clean_epoch/len(train_loader),
-                   "Train epochs accuracy": train_accuracy*100,
-                   "Train Clean epochs accuracy": train_clean_accuracy*100,
-                   "Validation epochs accuracy": validation_accuracy*100,
-                   "Validation best accuracy": val_best_accuracy*100,
-                    # "Epoch": epoch+1})
-                   "train_lr": scheduler.get_last_lr()[0],
-                   "Epsilons_metrics/min_epsilon": min_epsilon,
-                    "Epsilons_metrics/max_epsilon": max_epsilon,
-                    "Epsilons_metrics/mean_epsilon": mean_epsilon,
-                   "Epoch":epoch+1})
+            wandb_log_dict['Train epochs targeted loss'] = loss_targeted_epoch/len(train_loader)
+        # Actual logging
+        wandb.log(wandb_log_dict)
+        # wandb.log({"Train epochs loss": epoch_loss_pert/len(train_loader),
+        #            "Train epochs clean loss": loss_clean_epoch/len(train_loader),
+        #            "Train epochs accuracy": train_accuracy*100,
+        #            "Train Clean epochs accuracy": train_clean_accuracy*100,
+        #            "Validation epochs accuracy": validation_accuracy*100,
+        #            "Validation best accuracy": val_best_accuracy*100,
+        #             # "Epoch": epoch+1})
+        #            "train_lr": scheduler.get_last_lr()[0],
+        #            "Epsilons_metrics/min_epsilon": min_epsilon,
+        #             "Epsilons_metrics/max_epsilon": max_epsilon,
+        #             "Epsilons_metrics/mean_epsilon": mean_epsilon,
+        #            "Epoch":epoch+1})
         
 
     # Save the trained model at given path and verify whether the directory exists

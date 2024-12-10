@@ -1,4 +1,4 @@
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torchvision import datasets
 from torchvision.transforms import v2
 from torchvision.datasets import VisionDataset
@@ -82,32 +82,51 @@ def load_dataloaders(args, seed:int = 42):
         image_size = 32
     else:
         image_size = 224    
+
+    if 'imagenet' in args.dataset:
+        transform_mean, transform_std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+    if 'cifar10' == args.dataset:
+        transform_mean, transform_std = [0.4914, 0.4822, 0.4465], [0.2471, 0.2435, 0.2616]
     train_transform = v2.Compose([
-        # v2.ToImage(),
         v2.Resize((image_size, image_size)),
-        # v2.RandomHorizontalFlip(),
-        # v2.RandomRotation(15),
         v2.ToTensor(),
-        v2.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2471, 0.2435, 0.2616]),
+        v2.Normalize(mean=transform_mean, std=transform_std),
     ])
 
     test_transform = v2.Compose([
         v2.Resize((image_size, image_size)),
         v2.ToTensor(),
-        v2.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2471, 0.2435, 0.2616]),
+        v2.Normalize(mean=transform_mean, std=transform_std),
     ])
-        # train_transform = transforms.Compose([
-        #     transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2471, 0.2435, 0.2616]),
-        #     transforms.Resize((image_size, image_size)),
-        #     transforms.RandomHorizontalFlip(),
-        #     transforms.ToTensor(),
-        # test_transform = transforms.Compose([
-        #     transforms.Resize((224, 224)),
-        #     transforms.ToTensor(),
-        # ])
-    # train_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
-    train_dataset = datasets.CIFAR10(root="./data", train=True, transform=train_transform, download=True)
-    test_dataset = datasets.CIFAR10(root="./data", train=False, transform=test_transform, download=True)
+
+    if 'imagenet' in args.dataset:
+        print("Loading Imagenet dataset - might take a while. Grab a coffe.")
+        train_dataset = datasets.ImageFolder(root='/datasets/ImageNet/train', transform=train_transform)
+        test_dataset = datasets.ImageFolder(root='/datasets/ImageNet/val', transform=test_transform)
+        if 'imagenet100' == args.dataset:
+            # Identify classes to keep: labels divisible by 10
+            filtered_classes = [class_name for idx, class_name in enumerate(train_dataset.classes) if idx % 10 == 0]
+
+            # Map class indices to keep
+            filtered_class_indices = {train_dataset.class_to_idx[class_name] for class_name in filtered_classes}
+
+            # Filter training and validation datasets
+            train_filtered_indices = [
+                idx for idx, (_, label) in enumerate(train_dataset.samples)
+                if label in filtered_class_indices
+            ]
+            test_filtered_indices = [
+                idx for idx, (_, label) in enumerate(test_dataset.samples)
+                if label in filtered_class_indices
+            ]
+
+            # Create filtered datasets
+            train_dataset = Subset(train_dataset, train_filtered_indices)
+            test_dataset = Subset(test_dataset, test_filtered_indices)
+
+    elif 'cifar10' == args.dataset:
+        train_dataset = datasets.CIFAR10(root="./data", train=True, transform=train_transform, download=True)
+        test_dataset = datasets.CIFAR10(root="./data", train=False, transform=test_transform, download=True)
 
     # Split train_ds to train_ds and val_ds, with a ratio of 10% of the original train_ds size.
     train_ds, validation_ds = torch.utils.data.random_split(train_dataset, [0.9, 0.1], generator=g)

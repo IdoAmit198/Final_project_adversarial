@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 import os
+import json
+import wandb
 
 import fnmatch
 
@@ -106,6 +108,11 @@ def Plotly_plot_data(csv_files:list, y_label_column:str, specific_epsilons:list[
         else:
             file_dirs = file.split('/')
             model_name = file_dirs[1]
+            pgd_steps_dir = [dir for dir in file_dirs if 'pgd_steps_' in dir]
+            if len(pgd_steps_dir) == 0:
+                pgd_steps = 10
+            else:
+                pgd_steps = int(pgd_steps_dir[0].split('pgd_steps_')[-1])
             seed = file_dirs[2] if 'sanity_check' not in file else file_dirs[3]
             eval_trained_epsilon = re.search(r'[\d][\d]?', file_dirs[-1]).group()
             target_agnostic_dir = [dir for dir in file_dirs if 'agnostic_loss_' in dir][0]
@@ -126,7 +133,7 @@ def Plotly_plot_data(csv_files:list, y_label_column:str, specific_epsilons:list[
             if specific_agnostic is not None and whether_agnostic != specific_agnostic:
                 continue
             label = f'Model: {model_name}, '
-            # label += f'Seed: {seed}, '
+            label += f'PGD steps: {pgd_steps}, '
             label += f'Method: {train_method}, ' if specific_method is None else ''
             label += f'Agnostic: {whether_agnostic}, ' if specific_agnostic is None else ''
             label += f'Train_epsilon: {eval_trained_epsilon}'
@@ -164,8 +171,53 @@ def Plotly_plot_data(csv_files:list, y_label_column:str, specific_epsilons:list[
     if not os.path.exists(f'html_plots/{y_label_column}'):
         os.makedirs(f'html_plots/{y_label_column}')
     fig.write_html(f'html_plots/{y_label_column}/models{filename_suffix}.html')
-    fig.show()
+    # fig.show()
 
+
+def Wandb_report_data(csv_files:list):
+    """
+    Given a list of csv files, report the data to wandb.
+    Each csv should result in a different run.
+    Report every result column in the csv with respect to the epsilon values.
+    """
+    for idx, file in enumerate(csv_files):
+        df = pd.read_csv(file)
+        epsilons = df['epsilon']
+        file_dirs = file.split('/')
+        model_name = file_dirs[1]
+        pgd_steps_dir = [dir for dir in file_dirs if 'pgd_steps_' in dir]
+        if len(pgd_steps_dir) == 0:
+            pgd_steps = 10
+        else:
+            pgd_steps = int(pgd_steps_dir[0].split('pgd_steps_')[-1])
+        seed = file_dirs[2] if 'sanity_check' not in file else file_dirs[3]
+        eval_trained_epsilon = re.search(r'[\d][\d]?', file_dirs[-1]).group()
+        target_agnostic_dir = [dir for dir in file_dirs if 'agnostic_loss_' in dir][0]
+        whether_agnostic = 'True' if 'True' in target_agnostic_dir else 'False'
+        res = [i for i in range(len(file_dirs[-3])) if file_dirs[-3].startswith('_', i)]
+        train_method = None
+        if 'adaptive' in file:
+            train_method = 'adaptive'
+        elif 're_introduce' in file:
+            train_method = 're_introduce'
+        elif 'train' in file:
+            train_method = 'vanilla'
+        args = {
+            'model_name': model_name,
+            'pgd_steps': pgd_steps,
+            'seed': seed,
+            'eval_trained_epsilon': eval_trained_epsilon,
+            'whether_agnostic': whether_agnostic,
+            'train_method': train_method,
+            'Inference': True
+        }
+        args['log_name'] = f"{args['model_name']}_train method_{args['train_method']}_agnostic_loss_{args['whether_agnostic']}_seed_{args['seed']}_max epsilon_{int(args['eval_trained_epsilon'])}"
+        run = wandb.init(project="Adversarial-adaptive-project", name=f"Inference_{args['log_name']}", entity = "ido-shani-proj", config=args)
+        # Iterate over the values but from row number 1, since row number zero is columns titles:
+        for idx, (epsilon, eval, train) in enumerate(zip(df['epsilon'], df['eval_results'], df['train_results'])):
+            run.log({'Inference/ Test': eval*100}, step=epsilon)
+            run.log({'Inference/ Train': train*100}, step=epsilon)
+        run.finish()
 
 def plot_data(csv_files:list, y_label_column:str, specific_epsilons:list[int] = None, specific_method:str=None, specific_agnostic=None): 
     """
@@ -264,6 +316,8 @@ if __name__ == '__main__':
     # Testing sanity case
     # matches = ['saved_models/resnet18/sanity_check/seed_42/train_method_re_introduce/agnostic_loss_False/eval_accuracy_32.csv']
     # plot_data(matches, 'eval_results', specific_method='adaptive', specific_epsilons=[32, 64])
-    matches = [match for match in matches if 'WideResNet' not in match]
-    Plotly_plot_data(matches, 'eval_results', specific_method='adaptive', specific_epsilons=[32, 64])
+    matches = [match for match in matches if 'WideResNet' not in match and ('accuracy_32' in match or 'accuracy_64' in match)]
+    # # Plotly_plot_data(matches, 'eval_results', specific_method='adaptive', specific_epsilons=[32, 64])
+    # Plotly_plot_data(matches, 'eval_results', specific_epsilons=[32, 64])
     # Rearrange_PAT_csv_files()
+    Wandb_report_data(matches)
