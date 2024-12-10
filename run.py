@@ -232,11 +232,7 @@ if __name__ == '__main__':
         args.scaler = GradScaler()
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         for epsilon in tqdm(epsilons_list, desc=f'{time}Eval'):
-            res = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
-            if args.eval_uncertainty:
-                test_acc, uncertainty_dict = res
-            else:
-                test_acc = res
+            test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if acc_eval:
                 train_results.append(adv_eval(model, train_loader, args, epsilon/255))
                 eval_results.append(test_acc)
