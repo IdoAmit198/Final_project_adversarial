@@ -4,9 +4,8 @@ import argparse
 
 def get_args(description=""):
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument('--Train', type=bool, help='Whether to train a model or not.', default=True)
-    parser.add_argument('--Inference', type=bool, help='Whether to evaluate the model on different epsilons. Defaults to True.',
-                                        default=True)
+    parser.add_argument('--Train', action='store_true', help='Whether to train a model or not.')
+    parser.add_argument('--Inference', action='store_true', help='Whether to evaluate the model on different epsilons. Defaults to True.')
     parser.add_argument('-s', '--seed', type=int, default=42, help='Give random seed')
     parser.add_argument('-d', '--dataset',
                         choices=['cifar10', 'cifar100', 'flowers102', 'mnist', 'imagenet', 'imagenet100'],
@@ -24,14 +23,13 @@ def get_args(description=""):
                                                 Notice that the value should be in the range of 0-255, and a value of x actually is x/255.')
     parser.add_argument('--epsilon_step_size', type=float, default=1/255, help='Epsilon step increcement for adaptive adversarial training')
     parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')
-    # We aim to use a pre-defined scheduler which lower by 10 factor at 80, 140, 180.
     parser.add_argument('-bs', '--batch_size', type=int, default=128,
                         help='Batch size.')
     parser.add_argument('-lr', '--learning_rate', default=2e-1, type=float, help='learning rate for training')
     parser.add_argument('-wd', '--weight_decay', default=5e-4, type=float, help='weight decay for training')
     parser.add_argument("--momentum", default=0.9, type=float, help="SGD Momentum.")
     parser.add_argument('-tm', '--train_method', choices=['train','adaptive', 're_introduce', 'eval'], help='Training method. \
-                        Will be to decide whether to measure baseline, adaptive, and such.', default='re_introduce')
+                        Will be to decide whether to measure baseline, adaptive, and such.', default='adaptive')
     parser.add_argument('--agnostic_loss', action='store_true', help='Use agnostic loss')
     # Eval epsilons args
     parser.add_argument('--sanity_check', action='store_true', help='Whether we make a sanity check now. If we do, it changes the save dir.\n \

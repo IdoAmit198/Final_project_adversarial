@@ -85,19 +85,31 @@ def load_dataloaders(args, seed:int = 42):
 
     if 'imagenet' in args.dataset:
         transform_mean, transform_std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        train_transform = v2.Compose([
+            v2.Resize(int(image_size * 1.143)),
+            v2.CenterCrop(image_size),
+            v2.ToTensor(),
+            v2.Normalize(mean=transform_mean, std=transform_std),
+        ])
+
+        test_transform = v2.Compose([
+            v2.Resize((image_size, image_size)),
+            v2.ToTensor(),
+            v2.Normalize(mean=transform_mean, std=transform_std),
+        ])
     if 'cifar10' == args.dataset:
         transform_mean, transform_std = [0.4914, 0.4822, 0.4465], [0.2471, 0.2435, 0.2616]
-    train_transform = v2.Compose([
-        v2.Resize((image_size, image_size)),
-        v2.ToTensor(),
-        v2.Normalize(mean=transform_mean, std=transform_std),
-    ])
+        train_transform = v2.Compose([
+            v2.Resize((image_size, image_size)),
+            v2.ToTensor(),
+            v2.Normalize(mean=transform_mean, std=transform_std),
+        ])
 
-    test_transform = v2.Compose([
-        v2.Resize((image_size, image_size)),
-        v2.ToTensor(),
-        v2.Normalize(mean=transform_mean, std=transform_std),
-    ])
+        test_transform = v2.Compose([
+            v2.Resize((image_size, image_size)),
+            v2.ToTensor(),
+            v2.Normalize(mean=transform_mean, std=transform_std),
+        ])
 
     if 'imagenet' in args.dataset:
         print("Loading Imagenet dataset - might take a while. Grab a coffe.")
@@ -133,7 +145,10 @@ def load_dataloaders(args, seed:int = 42):
 
             # Update targets
             train_dataset.targets = [label for _, label in train_dataset.samples]
+            train_dataset.classes = filtered_classes
             test_dataset.targets = [label for _, label in test_dataset.samples]
+            test_dataset.classes = filtered_classes
+
 
             # Print debug info
             print(f"Filtered train samples: {len(train_dataset.samples)}")
@@ -147,11 +162,34 @@ def load_dataloaders(args, seed:int = 42):
 
     # Split train_ds to train_ds and val_ds, with a ratio of 10% of the original train_ds size.
     train_ds, validation_ds = torch.utils.data.random_split(train_dataset, [0.9, 0.1], generator=g)
+    
+    ###  Debugging ###
+    # Find the paths of all classes in the train_ds and the mapping of class names to indices
+    class_mapping = {}
+    for path, label in train_ds.dataset.samples:
+        class_name = train_ds.dataset.classes[label]
+        # if class_name not in filtered_classes:
+        #     continue
+        if class_name not in class_mapping:
+            class_mapping[class_name] = label
+        else:
+            assert class_mapping[class_name] == label, f"Class name {class_name} does not map to label {label} as expected in train_ds."
+
+    for path, label in validation_ds.dataset.samples:
+        class_name = validation_ds.dataset.classes[label]
+        # if class_name not in filtered_classes:
+        #     continue
+        if class_name not in class_mapping:
+            raise ValueError(f"Class name {class_name} not found in train_ds.")
+        else:
+            assert class_mapping[class_name] == label, f"Class name {class_name} does not map to label {label} as expected in validation_ds."
+    ### End Debugging ###
+    
     train_ds = DatasetWithMeta(train_ds)
     validation_ds = DatasetWithMeta(validation_ds)
     test_ds = DatasetWithMeta(test_dataset)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=args.cpu_num, pin_memory=True,
                               worker_init_fn=seed_worker, generator=g)
-    test_loader = DataLoader(test_ds, batch_size=int(batch_size/2), shuffle=False, num_workers=args.cpu_num, pin_memory=True)
-    validation_loader = DataLoader(validation_ds, batch_size=int(batch_size/2), shuffle=False, num_workers=args.cpu_num, pin_memory=True)
+    test_loader = DataLoader(test_ds, batch_size=int(batch_size), shuffle=False, num_workers=args.cpu_num, pin_memory=True)
+    validation_loader = DataLoader(validation_ds, batch_size=int(batch_size), shuffle=False, num_workers=args.cpu_num, pin_memory=True)
     return train_loader, validation_loader, test_loader

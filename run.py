@@ -100,6 +100,7 @@ if __name__ == '__main__':
     print("Started")
 
     args = get_args(description='Adversarial training')
+    args.Train = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
     if args.pgd_num_steps == 1:
@@ -175,7 +176,6 @@ if __name__ == '__main__':
         args.scaler = GradScaler()
         # Actual training
         adv_training(model, train_loader, validation_loader, test_loader, args)
-        wandb.finish()
     
     if args.Inference:
         if args.Train:
@@ -265,6 +265,7 @@ if __name__ == '__main__':
                     'Inference/ Confidence Mean': row['confidence_mean']
                 })
             wandb.log(wandb_log_metrics)
+        # wandb.finish()
         run.finish()
     
     # Finished running training or evaluation.

@@ -214,11 +214,11 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 y_score = model(x_pert)
                 loss_pert = F.cross_entropy(y_score, y)
+            x_augmented = clean_transform(x) if args.augment else x
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                y_clean_score = model(x_augmented)
+                loss_clean = F.cross_entropy(y_clean_score, y)
             if args.use_clean_loss:
-                x_augmented = clean_transform(x) if args.augment else x
-                with torch.autocast(device_type='cuda', dtype=torch.float16):
-                    y_clean_score = model(x_augmented)
-                    loss_clean = F.cross_entropy(y_clean_score, y)
                 scaled_loss_clean = args.scaler.scale(loss_clean)
             scaled_loss_pert = args.scaler.scale(loss_pert)
             epoch_loss_pert += loss_pert.item()
@@ -241,9 +241,9 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 else:
                     total_loss = scaled_loss_pert
                     total_loss_epoch += loss_pert.item()
-            if args.use_clean_loss:
-                clean_error_samples += (torch.argmax(y_clean_score, dim=1) != y).sum().item()
-                loss_clean_epoch += loss_clean.item()
+            # if args.use_clean_loss:
+            clean_error_samples += (torch.argmax(y_clean_score, dim=1) != y).sum().item()
+            loss_clean_epoch += loss_clean.item()
             y_pred = torch.argmax(y_score, dim=1)
             incorrect = (y_pred!=y).to('cpu')
             train_error_samples += incorrect.sum().item()
@@ -265,8 +265,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         ## Calculate accuracy
         train_accuracy = 1 - train_error_samples/train_samples_counter
-        if args.use_clean_loss:
-            train_clean_accuracy = 1 - clean_error_samples/train_samples_counter
+        # if args.use_clean_loss:
+        train_clean_accuracy = 1 - clean_error_samples/train_samples_counter
         print(f"Epoch {epoch+1}: Train total Loss: {total_loss_epoch/len(train_loader)}, Train Accuracy: {train_accuracy*100}%")
         epsilons_list = train_loader.dataset.epsilons
         min_epsilon = epsilons_list.min().item()
@@ -275,30 +275,43 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
 
         # Validation epoch each epoch to evaluate the model and save the best model.
         model.eval()
-        validation_16_error_samples = 0
-        validation_32_error_samples = 0
+        # validation_16_error_samples = 0
+        # validation_32_error_samples = 0
         validation_samples_counter = 0
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
+        validation_epsilons = [0, 8/255, 16/255, 32/255]
+        epsilons_error_samples = [0] * len(validation_epsilons)
+
         for batch in tqdm(validation_loader, desc=f'{time}Validation epoch {epoch+1}'):
             indices, epsilons, val_x, val_y = batch
             val_x, val_y = val_x.to(args.device), val_y.to(args.device)
             validation_samples_counter += val_x.shape[0]
-            val_x_pert_16 = PGD(model, val_x, val_y, 16, 20, args)
-            val_x_pert_32 = PGD(model, val_x, val_y, 32, 20, args)
-            with torch.autocast(device_type='cuda', dtype=torch.float16):
-                y_score_16 = model(val_x_pert_16)
-                y_score_32 = model(val_x_pert_32)
-            y_pred_16 = torch.argmax(y_score_16, dim=1)
-            y_pred_32 = torch.argmax(y_score_32, dim=1)
-            incorrect_16 = y_pred_16!=val_y
-            incorrect_32 = y_pred_32!=val_y
-            validation_16_error_samples += incorrect_16.sum().item()
-            validation_32_error_samples += incorrect_32.sum().item()
+            for idx, val_epsilon in enumerate(validation_epsilons):
+                val_x_pert = PGD(model, val_x, val_y, val_epsilon, 20, args)
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    y_score = model(val_x_pert)
+                score = torch.argmax(y_score, dim=1)
+                incorrect = score != val_y
+                epsilons_error_samples[idx] += incorrect.sum().item()
+            # val_x_pert_16 = PGD(model, val_x, val_y, 16, 20, args)
+            # val_x_pert_32 = PGD(model, val_x, val_y, 32, 20, args)
+            # with torch.autocast(device_type='cuda', dtype=torch.float16):
+            #     y_score_16 = model(val_x_pert_16)
+            #     y_score_32 = model(val_x_pert_32)
+            # y_pred_16 = torch.argmax(y_score_16, dim=1)
+            # y_pred_32 = torch.argmax(y_score_32, dim=1)
+            # incorrect_16 = y_pred_16!=val_y
+            # incorrect_32 = y_pred_32!=val_y
+            # validation_16_error_samples += incorrect_16.sum().item()
+            # validation_32_error_samples += incorrect_32.sum().item()
             # del val_x, val_x_pert, val_y
             # torch.cuda.empty_cache()
-        validation_16_accuracy = 1 - validation_16_error_samples/validation_samples_counter
-        validation_32_accuracy = 1 - validation_32_error_samples/validation_samples_counter
-        validation_accuracy = (validation_16_accuracy + validation_32_accuracy)/2
+        # validation_16_accuracy = 1 - validation_16_error_samples/validation_samples_counter
+        # validation_32_accuracy = 1 - validation_32_error_samples/validation_samples_counter
+        validation_accuracy_list = [1 - epsilon_error_sample/validation_samples_counter for epsilon_error_sample in epsilons_error_samples]
+        validation_epsilons_weights = [0.1, 0.04305, 0.01853, 0.00343]
+        normalized_validation_epsilons_weight = [weight/sum(validation_epsilons_weights) for weight in validation_epsilons_weights]
+        validation_accuracy = sum([normalized_weight * epsilon_accuracy for normalized_weight, epsilon_accuracy in zip(normalized_validation_epsilons_weight, validation_accuracy_list)])
         if validation_accuracy > val_best_accuracy:
             val_best_accuracy = validation_accuracy
             print(f"New best model found with validation accuracy of {val_best_accuracy*100}%!")
@@ -337,16 +350,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                         "Test epochs accuracy": test_accuracy*100,
                         "Test epochs loss": test_loss_pert/len(test_loader),
                        "Epoch": epoch+1})
-        # wandb.log({
-        #             "Validation epochs accuracy": validation_accuracy*100,
-        #             "Validation best accuracy": val_best_accuracy*100,
-        #             "Epoch": epoch+1})
-        # if args.agnostic_loss:
-        #     wandb.log({"Train epochs targeted loss": loss_targeted_epoch/len(train_loader),
-        #                 "Epoch": epoch+1})
-        # if args.train_method == 're_introduce':
-        #     wandb.log({"Epsilons_metrics/re_introduce_cur_prob": re_introduce_cur_prob,
-        #                 "Epoch": epoch+1})
+
         wandb_log_dict = {  "Train epochs loss": epoch_loss_pert/len(train_loader),
                             # "Train epochs clean loss": loss_clean_epoch/len(train_loader),
                             "Train epochs accuracy": train_accuracy*100,
@@ -359,25 +363,13 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                             "Epsilons_metrics/mean_epsilon": mean_epsilon,
                             "Epoch":epoch+1
         }
-        if args.use_clean_loss:
-            wandb_log_dict["Train epochs clean loss"] = loss_clean_epoch/len(train_loader)
-            wandb_log_dict["Train Clean epochs accuracy"] = train_clean_accuracy*100
+        # if args.use_clean_loss:
+        wandb_log_dict["Train epochs clean loss"] = loss_clean_epoch/len(train_loader)
+        wandb_log_dict["Train Clean epochs accuracy"] = train_clean_accuracy*100
         if args.agnostic_loss:
             wandb_log_dict['Train epochs targeted loss'] = loss_targeted_epoch/len(train_loader)
         # Actual logging
         wandb.log(wandb_log_dict)
-        # wandb.log({"Train epochs loss": epoch_loss_pert/len(train_loader),
-        #            "Train epochs clean loss": loss_clean_epoch/len(train_loader),
-        #            "Train epochs accuracy": train_accuracy*100,
-        #            "Train Clean epochs accuracy": train_clean_accuracy*100,
-        #            "Validation epochs accuracy": validation_accuracy*100,
-        #            "Validation best accuracy": val_best_accuracy*100,
-        #             # "Epoch": epoch+1})
-        #            "train_lr": scheduler.get_last_lr()[0],
-        #            "Epsilons_metrics/min_epsilon": min_epsilon,
-        #             "Epsilons_metrics/max_epsilon": max_epsilon,
-        #             "Epsilons_metrics/mean_epsilon": mean_epsilon,
-        #            "Epoch":epoch+1})
         
 
     # Save the trained model at given path and verify whether the directory exists
