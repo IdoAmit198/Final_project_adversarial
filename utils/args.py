@@ -4,6 +4,7 @@ import argparse
 
 def get_args(description=""):
     parser = argparse.ArgumentParser(description=description)
+    # parser.add_argument('--Train', action='store_false', help='Whether to train a model or not.')
     parser.add_argument('--Train', action='store_true', help='Whether to train a model or not.')
     parser.add_argument('--Inference', action='store_true', help='Whether to evaluate the model on different epsilons. Defaults to True.')
     parser.add_argument('-s', '--seed', type=int, default=42, help='Give random seed')
@@ -22,10 +23,10 @@ def get_args(description=""):
     parser.add_argument('--max_epsilon', type=int, default=32, help='Maximum epsilon value for adaptive adversarial training.\n\
                                                 Notice that the value should be in the range of 0-255, and a value of x actually is x/255.')
     parser.add_argument('--epsilon_step_size', type=float, default=1/255, help='Epsilon step increcement for adaptive adversarial training')
-    parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')
+    # parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')
     parser.add_argument('-bs', '--batch_size', type=int, default=128,
                         help='Batch size.')
-    parser.add_argument('-lr', '--learning_rate', default=2e-1, type=float, help='learning rate for training')
+    parser.add_argument('-lr', '--learning_rate', default=1e-1, type=float, help='learning rate for training')
     parser.add_argument('-wd', '--weight_decay', default=5e-4, type=float, help='weight decay for training')
     parser.add_argument("--momentum", default=0.9, type=float, help="SGD Momentum.")
     parser.add_argument('-tm', '--train_method', choices=['train','adaptive', 're_introduce', 'eval'], help='Training method. \
@@ -39,5 +40,12 @@ def get_args(description=""):
     parser.add_argument('--eval_uncertainty', type=bool, default=True,
                         help='Whether to evaluate the uncertainty estimation abilities of the trained model. Defauled to True.\n \
                         Uncertainty estimation will be assessed only using the test set.')
+    # ATAS args
+    parser.add_argument('--ATAS', action='store_true', help='Whether to use ATAS or not.')
+    # parser.add_argument('--ATAS', action='store_false', help='Whether to use ATAS or not.')
+    parser.add_argument('--atas_beta', default=0.5, type=float, help='hardness momentum')
+    parser.add_argument('--atas_c', default=0.1, type=float, help='constant for ATAS')
+    parser.add_argument('--atas_max_step_size', default=8/255, type=float, help='maximum perturb step size')
+    parser.add_argument('--atas_min_step_size', default=4/255, type=float, help='minimum perturb step size')
     args = parser.parse_args()
     return args

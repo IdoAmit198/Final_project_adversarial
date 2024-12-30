@@ -14,7 +14,7 @@ from datetime import datetime
 from utils.uncertainty_metrics import log_uncertainty
 from utils.warm_schduler import WarmupCosineLR
 
-def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False):
+def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = None):
     model.eval()
     # Freeze model for the PGD attack
     for p in model.parameters():
@@ -32,7 +32,22 @@ def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False):
         scaled_loss = args.scaler.scale(loss)
         grad = torch.autograd.grad(scaled_loss.mean(), [x_pert])[0].detach()
         x_grad = torch.sign(grad)
-        pgd_step_size = epsilons*args.pgd_step_size_factor
+        if gdnorms is not None:
+            with torch.no_grad():
+                cur_gdnorm = torch.norm(grad.view(len(x_pert), -1), dim=1).detach() ** 2 * (1 - args.atas_beta) + gdnorms * args.atas_beta
+                step_sizes = 1 / (1 + torch.sqrt(cur_gdnorm) / args.atas_c) * 2 * 8 / 255
+                step_sizes = torch.clamp(step_sizes, args.atas_min_step_size, args.atas_max_step_size)
+            pgd_step_size = step_sizes.view(-1, 1, 1, 1).expand_as(grad)
+            gdnorms = cur_gdnorm
+            # print("#"*30)
+            # print(f"grad shape: {grad.shape}")
+            # print(f"pgd_step_size shape: {pgd_step_size.shape}")
+            # print(f"step_sizes shape: {step_sizes.shape}")
+            # print(f"gdnorms:\n{gdnorms}")
+            # print(f"step_sizes\n{step_sizes}")
+            # print("#"*30)
+        else:
+            pgd_step_size = epsilons*args.pgd_step_size_factor
         pgd_grad_step = pgd_step_size*x_grad
         assert pgd_grad_step.shape == x.shape
         if not targeted:
@@ -47,6 +62,8 @@ def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False):
     # Unfreeze model after the PGD attack
     for p in model.parameters():
         p.requires_grad = True
+    if gdnorms is not None:
+        return x_pert, gdnorms
     return x_pert
 
 def epsilon_clamp(epsilons, max_epsilon):
@@ -122,15 +139,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
     timezone = pytz.timezone('Asia/Jerusalem')
     # Initialize the optimizer and the scheduler
     optimizer, scheduler = configure_optimizers(model, train_loader, args)
-    
-    # optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
-    # scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 140, 180], gamma=0.1)
-    # Initialize a linear scheduler for the probability to re-introudce smaller epsilon values.
-    # It rise steadily from 0 to args.re_introduce_prob in the first half of the training and then stays constant.
-    # re_introduce_prob_step_size = 2*args.re_introduce_prob/args.max_epochs
-    # re_introduce_cur_prob = 0
-    # Actual training+eval loop. We make an evaluation every 5 epochs.
-    
+    # if args.ATAS:
+    gdnorm_list = torch.zeros(len(train_loader.dataset), device=args.device)
     # Initialize augmentation transformation for clean samples:
     clean_transform = v2.Compose([
         v2.RandomHorizontalFlip(),
@@ -203,13 +213,21 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                     # epsilons_tensor -= random_uniform
                 epsilons_tensor = epsilons_tensor.unsqueeze(1).unsqueeze(1).unsqueeze(1)
                 epsilons_to_pgd = epsilons_tensor
-            x_pert = PGD(model, x, y, epsilons_to_pgd, args.pgd_num_steps, args)
-
+            
+            gdnorm_batch = gdnorm_list[indices] if args.ATAS else None
+            x_pert = PGD(model, x, y, epsilons_to_pgd, args.pgd_num_steps, args, gdnorms=gdnorm_batch)
+            if args.ATAS:
+                # If we use ATAS, PGD returns two objects, the perturbed image and the gradient norm
+                x_pert, new_gdnorm_batch = x_pert
+                gdnorm_list[indices] = new_gdnorm_batch
             if args.agnostic_loss:
                 # Generate y_targeted with random different labels than y
                 y_targeted = torch.randint(0, 9, (x.shape[0],), device=args.device)
                 y_targeted[y_targeted>=y] += 1
-                x_targeted_pert = PGD(model, x, y_targeted, epsilons_to_pgd, args.pgd_num_steps, args, targeted=True)
+                x_targeted_pert = PGD(model, x, y_targeted, epsilons_to_pgd, args.pgd_num_steps, args, targeted=True, gdnorms=gdnorm_batch)
+                if args.ATAS:
+                    # If we use ATAS, PGD returns two objects, the perturbed image and the gradient norm
+                    x_targeted_pert, _ = x_targeted_pert
             model.train()
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 y_score = model(x_pert)
@@ -368,6 +386,11 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         wandb_log_dict["Train Clean epochs accuracy"] = train_clean_accuracy*100
         if args.agnostic_loss:
             wandb_log_dict['Train epochs targeted loss'] = loss_targeted_epoch/len(train_loader)
+        if args.ATAS:
+            wandb_log_dict['ATAS/Gradients-Norm mean'] = gdnorm_list.mean().item()
+            logging_step_sizes = 1 / (1 + torch.sqrt(gdnorm_list) / args.atas_c) * 2 * 8 / 255
+            logging_step_sizes = torch.clamp(logging_step_sizes, args.atas_min_step_size, args.atas_max_step_size)
+            wandb_log_dict['ATAS/ Step-Size mean'] = logging_step_sizes.mean().item()
         # Actual logging
         wandb.log(wandb_log_dict)
         

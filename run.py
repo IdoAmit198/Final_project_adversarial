@@ -129,6 +129,7 @@ if __name__ == '__main__':
     if 'wide' in args.model_name.lower():
         model = getattr(wide_resnet, args.model_name)(num_classes=num_classes)
     elif 'preact' in args.model_name.lower():
+        args.atas_c = 0.01
         model = PreActResNet18(num_classes=num_classes)
     else:
         model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
@@ -161,7 +162,7 @@ if __name__ == '__main__':
         wandb.define_metric("train_lr", step_metric="Epoch")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
-        save_dir = f"saved_models/{args.dataset}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}"
+        save_dir = f"saved_models/{args.dataset}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}/ATAS_{args.ATAS}"
         if os.path.exists(save_dir) and args.sanity_check:
             print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
             additional_folder = 'sanity_check_2-new/'
@@ -234,7 +235,8 @@ if __name__ == '__main__':
         for epsilon in tqdm(epsilons_list, desc=f'{time}Eval'):
             test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if acc_eval:
-                train_results.append(adv_eval(model, train_loader, args, epsilon/255))
+                train_acc, _ = adv_eval(model, train_loader, args, epsilon/255, uncertainty_evaluation=False)
+                train_results.append(train_acc)
                 eval_results.append(test_acc)
                 print(f"Evaluated epsilon:{epsilon} , Test Accuracy: {eval_results[-1]*100}% , Train Accuracy: {train_results[-1]*100}%")
             if args.eval_uncertainty:
