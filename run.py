@@ -34,7 +34,10 @@ def Inference_Args(args):
     try:
         with open(f'{eval_model_path_dir}/args.json', 'r') as f:
             loaded_args = json.load(f)
+        eval_model_path = args.eval_model_path
         args = loaded_args
+        args['eval_model_path'] = eval_model_path
+
     except FileNotFoundError:
         print(f"File {eval_model_path_dir}/args.json not found. Will do our best with the model path")
         file_dirs = args.eval_model_path.split('/')
