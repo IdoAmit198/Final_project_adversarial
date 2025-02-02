@@ -7,6 +7,8 @@ def get_args(description=""):
     # parser.add_argument('--Train', action='store_false', help='Whether to train a model or not.')
     parser.add_argument('--Train', action='store_true', help='Whether to train a model or not.')
     parser.add_argument('--Inference', action='store_true', help='Whether to evaluate the model on different epsilons. Defaults to True.')
+    parser.add_argument('--fine_tune', type=str, default=None, choices=['clean', 'adversarial', None],
+                        help='Whether to fine-tune a clean or an adversarial checkpoint model. Defaults to None, which does not fine-tune at all.')
     parser.add_argument('-s', '--seed', type=int, default=42, help='Give random seed')
     parser.add_argument('-d', '--dataset',
                         choices=['cifar10', 'cifar100', 'flowers102', 'mnist', 'imagenet', 'imagenet100'],
@@ -30,14 +32,14 @@ def get_args(description=""):
     parser.add_argument('-wd', '--weight_decay', default=5e-4, type=float, help='weight decay for training')
     parser.add_argument("--momentum", default=0.9, type=float, help="SGD Momentum.")
     parser.add_argument('-tm', '--train_method', choices=['train','adaptive', 're_introduce', 'eval'], help='Training method. \
-                        Will be to decide whether to measure baseline, adaptive, and such.', default='adaptive')
+                        Will be to decide whether to measure baseline, adaptive, and such.', default='re_introduce')
     parser.add_argument('--agnostic_loss', action='store_true', help='Use agnostic loss')
     # Eval epsilons args
     parser.add_argument('--sanity_check', action='store_true', help='Whether we make a sanity check now. If we do, it changes the save dir.\n \
                                                                     Defaults to false.')
     parser.add_argument('--eval_epsilon_max', type=int, default=32, help='Maximum epsilon value for evaluation of trained models')
     parser.add_argument('--eval_model_path', type=str, help='Path for the model to be evaluated.', default=None)
-    parser.add_argument('--eval_uncertainty', type=bool, default=True,
+    parser.add_argument('--eval_uncertainty', action='store_true',
                         help='Whether to evaluate the uncertainty estimation abilities of the trained model. Defauled to True.\n \
                         Uncertainty estimation will be assessed only using the test set.')
     # ATAS args

@@ -27,6 +27,7 @@ Datasets = ['cifar100', 'cifar10', 'flowers102', 'mnist', 'imagenet100', 'imagen
 
 def Inference_Args(args):
     # Attempt to load the json in the args.eval_model_path
+    eval_model_path = args.eval_model_path
     eval_model_path_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
     eval_uncertainty_flag = args.eval_uncertainty
     device = args.device
@@ -63,6 +64,11 @@ def Inference_Args(args):
             optimizer = 'SGD'
         else:
             optimizer = optimizer_dir[0].split('optimizer_')[-1]
+        ATAS_dir = [dir for dir in file_dirs if 'ATAS_' in dir]
+        if len(ATAS_dir) == 0:
+            ATAS = False
+        else:
+            ATAS = ATAS_dir[0].split('ATAS_')[-1]
         eval_trained_epsilon = re.search(r'[\d][\d]?', file_dirs[-1]).group()
         target_agnostic_dir = [dir for dir in file_dirs if 'agnostic_loss_' in dir][0]
         whether_agnostic = 'True' if 'True' in target_agnostic_dir else 'False'
@@ -84,6 +90,8 @@ def Inference_Args(args):
             'train_method': train_method,
             'Inference': True,
             'eval_model_path': args.eval_model_path,
+            'ATAS': ATAS,
+            'eval_model_path': eval_model_path
         }
         args = new_args
         args['log_name'] = f"{args['model_name']}_train method_{args['train_method']}_agnostic_loss_{args['whether_agnostic']}_seed_{args['seed']}_max epsilon_{int(args['eval_trained_epsilon'])}"
@@ -100,7 +108,7 @@ if __name__ == '__main__':
     print("Started")
 
     args = get_args(description='Adversarial training')
-    args.Train = True
+    # args.Train = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
     if args.pgd_num_steps == 1:
@@ -132,11 +140,16 @@ if __name__ == '__main__':
         args.atas_c = 0.01
         model = PreActResNet18(num_classes=num_classes)
     else:
-        model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=None)
-    model = model.to(args.device)
+        weights = None
+        if args.fine_tune == 'clean':
+            weights = "IMAGENET1K_V2"
+        elif args.fine_tune == 'adversarial':
+            pass
+        model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=weights)
     
     timezone = pytz.timezone('Asia/Jerusalem')
     if args.Train:
+        model = model.to(args.device)
         if args.optimizer == 'Adam':
             # TODO: Refactor later to better practice.
             args.learning_rate = 1e-3
@@ -170,6 +183,7 @@ if __name__ == '__main__':
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         args.save_dir = save_dir
+        args.eval_model_path = f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth"
         with open(f'{save_dir}/args.json', 'w') as f:
             json.dump(args.__dict__, f, indent=2)
         print(f"args saved in {save_dir}/args.json")
@@ -198,8 +212,15 @@ if __name__ == '__main__':
             wandb.define_metric("Inference/ Confidence Mean", step_metric="Epsilon")
 
         # load statce_dict of the trained model from given path
-        model.load_state_dict(torch.load(args.eval_model_path))
+        print(args)
+        print(f"eval_model_path is {args.eval_model_path}")
+        if os.path.isfile(args.eval_model_path):
+            model.load_state_dict(torch.load(args.eval_model_path))
+        else:
+            raise FileNotFoundError(f"Model file not found: {args.eval_model_path}")
+        # model.load_state_dict(torch.load(args.eval_model_path))
         print("Model loaded")
+        model = model.to(args.device)
         print(f"path: {args.eval_model_path}")
         # Extract the eval_model_ath dir out of the args.eval_model_path path, by ignoring the pth file at the suffix
         save_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
