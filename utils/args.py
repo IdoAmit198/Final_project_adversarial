@@ -7,12 +7,12 @@ def get_args(description=""):
     # parser.add_argument('--Train', action='store_false', help='Whether to train a model or not.')
     parser.add_argument('--Train', action='store_true', help='Whether to train a model or not.')
     parser.add_argument('--Inference', action='store_true', help='Whether to evaluate the model on different epsilons. Defaults to True.')
-    parser.add_argument('--fine_tune', type=str, default=None, choices=['clean', 'adversarial', None],
+    parser.add_argument('--fine_tune', type=str, default='clean', choices=['clean', 'adversarial', None],
                         help='Whether to fine-tune a clean or an adversarial checkpoint model. Defaults to None, which does not fine-tune at all.')
     parser.add_argument('-s', '--seed', type=int, default=42, help='Give random seed')
     parser.add_argument('-d', '--dataset',
                         choices=['cifar10', 'cifar100', 'flowers102', 'mnist', 'imagenet', 'imagenet100'],
-                        help='Give the dataset name from the choices. Currently, only Cifar-10 is supported.', default='imagenet100')
+                        help='Give the dataset name from the choices. Currently, only Cifar-10 is supported.', default='imagenet')
     parser.add_argument('--augment', action='store_true', help='Whether to augment the training data')
     parser.add_argument('--use_clean_loss', action='store_true', help='Whether to use clean loss')
     parser.add_argument('-m', '--model_name', choices=['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'resnet34', 'preact_resnet18', 'resnet50'] ,default='resnet18')
@@ -20,9 +20,9 @@ def get_args(description=""):
     parser.add_argument('--scheduler', type=str, choices=['MultiStepLR', 'WarmupCosineLR', 'CyclicLR'], help='The scheduler type for the learning rate.', default='WarmupCosineLR')
     parser.add_argument('--warmup_ratio', type=float, default=0.1, help='The warmup ratio for the WarmupCosineLR scheduler. A float between 0 and 1.')
     parser.add_argument('-e', '--max_epochs', type=int, default=150, help='Give number of epochs for training')
-    parser.add_argument('--pgd_num_steps', type=int, default=1, help='Number of PGD training iterations')
+    parser.add_argument('--pgd_num_steps', type=int, default=2, help='Number of PGD training iterations')
     parser.add_argument('--pgd_step_size_factor', type=float, default=1.0, help='Step size factor for PGD training')
-    parser.add_argument('--max_epsilon', type=int, default=32, help='Maximum epsilon value for adaptive adversarial training.\n\
+    parser.add_argument('--max_epsilon', type=int, default=16, help='Maximum epsilon value for adaptive adversarial training.\n\
                                                 Notice that the value should be in the range of 0-255, and a value of x actually is x/255.')
     parser.add_argument('--epsilon_step_size', type=float, default=1/255, help='Epsilon step increcement for adaptive adversarial training')
     # parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')

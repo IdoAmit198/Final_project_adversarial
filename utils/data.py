@@ -165,24 +165,24 @@ def load_dataloaders(args, seed:int = 42):
     
     ###  Debugging ###
     # Find the paths of all classes in the train_ds and the mapping of class names to indices
-    class_mapping = {}
-    for path, label in train_ds.dataset.samples:
-        class_name = train_ds.dataset.classes[label]
-        # if class_name not in filtered_classes:
-        #     continue
-        if class_name not in class_mapping:
-            class_mapping[class_name] = label
-        else:
-            assert class_mapping[class_name] == label, f"Class name {class_name} does not map to label {label} as expected in train_ds."
+    # class_mapping = {}
+    # for path, label in train_ds.dataset.samples:
+    #     class_name = train_ds.dataset.classes[label]
+    #     # if class_name not in filtered_classes:
+    #     #     continue
+    #     if class_name not in class_mapping:
+    #         class_mapping[class_name] = label
+    #     else:
+    #         assert class_mapping[class_name] == label, f"Class name {class_name} does not map to label {label} as expected in train_ds."
 
-    for path, label in validation_ds.dataset.samples:
-        class_name = validation_ds.dataset.classes[label]
-        # if class_name not in filtered_classes:
-        #     continue
-        if class_name not in class_mapping:
-            raise ValueError(f"Class name {class_name} not found in train_ds.")
-        else:
-            assert class_mapping[class_name] == label, f"Class name {class_name} does not map to label {label} as expected in validation_ds."
+    # for path, label in validation_ds.dataset.samples:
+    #     class_name = validation_ds.dataset.classes[label]
+    #     # if class_name not in filtered_classes:
+    #     #     continue
+    #     if class_name not in class_mapping:
+    #         raise ValueError(f"Class name {class_name} not found in train_ds.")
+    #     else:
+    #         assert class_mapping[class_name] == label, f"Class name {class_name} does not map to label {label} as expected in validation_ds."
     ### End Debugging ###
     
     train_ds = DatasetWithMeta(train_ds)

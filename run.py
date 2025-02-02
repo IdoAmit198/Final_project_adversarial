@@ -94,7 +94,8 @@ def Inference_Args(args):
             'Inference': True,
             'eval_model_path': args.eval_model_path,
             'ATAS': ATAS,
-            'eval_model_path': eval_model_path
+            'eval_model_path': eval_model_path,
+            'fine_tune': None
         }
         args = new_args
         args['log_name'] = f"{args['model_name']}_train method_{args['train_method']}_agnostic_loss_{args['whether_agnostic']}_seed_{args['seed']}_max epsilon_{int(args['eval_trained_epsilon'])}"
@@ -120,6 +121,10 @@ if __name__ == '__main__':
         args.pgd_step_size_factor = 0.5
     else:
         args.pgd_step_size_factor = 0.2
+    
+    # Adjust learning rate in ase of fine-tuning
+    if args.fine_tune:
+        args.learning_rate /= 10
         
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -178,7 +183,7 @@ if __name__ == '__main__':
         wandb.define_metric("train_lr", step_metric="Epoch")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
-        save_dir = f"saved_models/{args.dataset}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}/ATAS_{args.ATAS}"
+        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}"
         if os.path.exists(save_dir) and args.sanity_check:
             print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
             additional_folder = 'sanity_check_2-new/'
