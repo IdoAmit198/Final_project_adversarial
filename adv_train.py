@@ -346,7 +346,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 val_x_pert = PGD(model, val_x, val_y, val_epsilon, 20, args)
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_score = model(val_x_pert)
-                epsilons_error_samples[idx] = (y_score.argmax(dim=1) != val_y).sum().item()
+                epsilons_error_samples[idx] += (y_score.argmax(dim=1) != val_y).sum().item()
                 # incorrect = score != val_y
                 # epsilons_error_samples[idx] += incorrect.sum().item()
             # val_x_pert_16 = PGD(model, val_x, val_y, 16, 20, args)
