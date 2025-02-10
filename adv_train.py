@@ -233,11 +233,14 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 y_score = model(x_pert)
                 loss_pert = F.cross_entropy(y_score, y)
             x_augmented = clean_transform(x) if args.augment else x
+            if args.GradAlign:
+                x_augmented.requires_grad = True
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 y_clean_score = model(x_augmented)
                 loss_clean = F.cross_entropy(y_clean_score, y)
-            if args.use_clean_loss:
-                scaled_loss_clean = args.scaler.scale(loss_clean)
+                a=1
+            # if args.use_clean_loss:
+            scaled_loss_clean = args.scaler.scale(loss_clean)
             scaled_loss_pert = args.scaler.scale(loss_pert)
             epoch_loss_pert += loss_pert.item()
             if args.agnostic_loss:
@@ -259,7 +262,27 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 else:
                     total_loss = scaled_loss_pert
                     total_loss_epoch += loss_pert.item()
-            # if args.use_clean_loss:
+            # If we use GradAlign, make another computation, and add it to the total loss term.
+            if args.GradAlign:
+                # Sample a perturbation from a uniform compute the gradients w.r.t the perturbed sample
+                x_clone = x.clone().detach().requires_grad_(True)
+                x_clone = x_clone + (torch.zeros_like(x_clone).uniform_(-1,1)*epsilons_to_pgd)
+                # compute grad w.r.t the uniform perturbed samples
+                with torch.autocast(device_type='cuda', dtype=torch.float16):
+                    y_unif_score = model(x_clone)
+                    unif_pert_loss = F.cross_entropy(y_unif_score, y)
+                scaled_unif_pert_loss = args.scaler.scale(unif_pert_loss)
+                # scaled_clean_loss = args.scaler.scale(clean_loss)
+                # Compute the gradients w.r.t the input sample
+                grad_unif_pert = torch.autograd.grad(scaled_unif_pert_loss.mean(), [x_clone])[0].detach()
+                # Utilize the already computed clean loss from above
+                grad_clean = torch.autograd.grad(scaled_loss_clean.mean(), [x_augmented])[0].detach()
+                grad1 = grad_unif_pert.reshape(len(grad_unif_pert), -1)
+                grad2 =  grad_clean.reshape(len(grad_clean), -1)
+                cos_sim = torch.nn.functional.cosine_similarity(grad1, grad2, 1)
+                grad_alignment = cos_sim.mean().item()
+                reg = args.grad_align_lambda * (1.0 - cos_sim.mean())
+                total_loss = total_loss + reg
             clean_error_samples += (torch.argmax(y_clean_score, dim=1) != y).sum().item()
             loss_clean_epoch += loss_clean.item()
             y_pred = torch.argmax(y_score, dim=1)
@@ -273,6 +296,10 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             
             optimizer.zero_grad()
             total_loss.backward()
+            # Calculate the mean gradient across all parameters in model
+            mean_grad = 0
+            for p in model.parameters():
+                mean_grad += p.grad.mean().item()
             # optimizer.step()
             args.scaler.step(optimizer)
             scheduler.step()
@@ -297,7 +324,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         # validation_32_error_samples = 0
         validation_samples_counter = 0
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
-        validation_epsilons = [0, 8/255, 16/255, 32/255]
+        # validation_epsilons = [0, 8/255, 16/255, 32/255]
+        validation_epsilons = [0, args.max_epsilon/4, args.max_epsilon/2, args.max_epsilon]
         epsilons_error_samples = [0] * len(validation_epsilons)
 
         for batch in tqdm(validation_loader, desc=f'{time}Validation epoch {epoch+1}'):
@@ -327,9 +355,11 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         # validation_16_accuracy = 1 - validation_16_error_samples/validation_samples_counter
         # validation_32_accuracy = 1 - validation_32_error_samples/validation_samples_counter
         validation_accuracy_list = [1 - epsilon_error_sample/validation_samples_counter for epsilon_error_sample in epsilons_error_samples]
-        validation_epsilons_weights = [0.1, 0.04305, 0.01853, 0.00343]
-        normalized_validation_epsilons_weight = [weight/sum(validation_epsilons_weights) for weight in validation_epsilons_weights]
-        validation_accuracy = sum([normalized_weight * epsilon_accuracy for normalized_weight, epsilon_accuracy in zip(normalized_validation_epsilons_weight, validation_accuracy_list)])
+        
+        # validation_epsilons_weights = [0.1, 0.04305, 0.01853, 0.00343]
+        # normalized_validation_epsilons_weight = [weight/sum(validation_epsilons_weights) for weight in validation_epsilons_weights]
+        # validation_accuracy = sum([normalized_weight * epsilon_accuracy for normalized_weight, epsilon_accuracy in zip(normalized_validation_epsilons_weight, validation_accuracy_list)])
+        validation_accuracy = sum(validation_accuracy_list)/len(validation_accuracy_list)
         if validation_accuracy > val_best_accuracy:
             val_best_accuracy = validation_accuracy
             print(f"New best model found with validation accuracy of {val_best_accuracy*100}%!")
@@ -373,8 +403,12 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                             # "Train epochs clean loss": loss_clean_epoch/len(train_loader),
                             "Train epochs accuracy": train_accuracy*100,
                             # "Train Clean epochs accuracy": train_clean_accuracy*100,
-                            "Validation epochs accuracy": validation_accuracy*100,
-                            "Validation best accuracy": val_best_accuracy*100,
+                            "Validation/Mean Validation accuracy": validation_accuracy*100,
+                            "Validation/Clean Accuracy": validation_accuracy_list[0]*100,
+                            f"Validation/Epsilon {validation_epsilons[1]*255}": validation_accuracy_list[1]*100,
+                            f"Validation/Epsilon {validation_epsilons[2]*255}": validation_accuracy_list[2]*100,
+                            f"Validation/Epsilon {validation_epsilons[3]*255}": validation_accuracy_list[3]*100,
+                            "Validation/Validation best accuracy": val_best_accuracy*100,
                             "train_lr": scheduler.get_last_lr()[0],
                             "Epsilons_metrics/min_epsilon": min_epsilon,
                             "Epsilons_metrics/max_epsilon": max_epsilon,
@@ -391,6 +425,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             logging_step_sizes = 1 / (1 + torch.sqrt(gdnorm_list) / args.atas_c) * 2 * 8 / 255
             logging_step_sizes = torch.clamp(logging_step_sizes, args.atas_min_step_size, args.atas_max_step_size)
             wandb_log_dict['ATAS/ Step-Size mean'] = logging_step_sizes.mean().item()
+        if args.GradAlign:
+            wandb_log_dict['GradAlign/Gradients Alignment'] = grad_alignment
         # Actual logging
         wandb.log(wandb_log_dict)
         
