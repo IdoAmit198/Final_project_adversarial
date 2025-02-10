@@ -112,8 +112,8 @@ if __name__ == '__main__':
     print("Started")
 
     args = get_args(description='Adversarial training')
-    args.Train = True
-    args.fine_tune = 'clean'
+    # args.Train = True
+    # args.fine_tune = 'clean'
     # args.GradAlign = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
