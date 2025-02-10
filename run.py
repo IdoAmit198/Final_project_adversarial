@@ -10,7 +10,7 @@ import torch
 import torchvision
 from utils.data import load_dataloaders
 from adv_train import adv_training, adv_eval
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 
 import pandas as pd
 import re
@@ -112,7 +112,9 @@ if __name__ == '__main__':
     print("Started")
 
     args = get_args(description='Adversarial training')
-    # args.Train = True
+    args.Train = True
+    args.fine_tune = 'clean'
+    # args.GradAlign = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
     if args.pgd_num_steps == 1:
@@ -137,27 +139,30 @@ if __name__ == '__main__':
     print(f"args:\n{args}")
     
     train_loader, validation_loader, test_loader = load_dataloaders(args)
-    num_classes=10 # Cifar10
+    args.num_classes=10 # Cifar10
     if args.dataset in ['cifar100', 'imagenet100']:
-        num_classes = 100
+        args.num_classes = 100
     elif args.dataset == 'imagenet':
-        num_classes = 1000
+        args.num_classes = 1000
     if 'wide' in args.model_name.lower():
-        model = getattr(wide_resnet, args.model_name)(num_classes=num_classes)
+        model = getattr(wide_resnet, args.model_name)(num_classes=args.num_classes)
     elif 'preact' in args.model_name.lower():
         args.atas_c = 0.01
-        model = PreActResNet18(num_classes=num_classes)
+        model = PreActResNet18(num_classes=args.num_classes)
     else:
         weights = None
         if args.fine_tune == 'clean':
-            weights = "IMAGENET1K_V2"
+            weights = "IMAGENET1K_V1"
         elif args.fine_tune == 'adversarial':
             pass
-        model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=weights)
+        model = torchvision.models.get_model(args.model_name,num_classes=args.num_classes, weights=weights)
     
     timezone = pytz.timezone('Asia/Jerusalem')
+    # args.Train = True
     if args.Train:
         model = model.to(args.device)
+        # model = torch.compile(model)
+        model.forward = torch.compile(model.forward)
         if args.optimizer == 'Adam':
             # TODO: Refactor later to better practice.
             args.learning_rate = 1e-3
