@@ -152,7 +152,7 @@ if __name__ == '__main__':
     else:
         weights = None
         if args.fine_tune == 'clean':
-            weights = "IMAGENET1K_V1"
+            weights = "IMAGENET1K_V2"
         elif args.fine_tune == 'adversarial':
             pass
         model = torchvision.models.get_model(args.model_name,num_classes=args.num_classes, weights=weights)
@@ -188,7 +188,7 @@ if __name__ == '__main__':
         wandb.define_metric("train_lr", step_metric="Epoch")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
-        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}"
+        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/GradAlign_{args.GradAlign}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}"
         if os.path.exists(save_dir) and args.sanity_check:
             print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
             additional_folder = 'sanity_check_2-new/'

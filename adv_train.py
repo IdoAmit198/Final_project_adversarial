@@ -174,6 +174,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         train_error_samples = 0
         clean_error_samples = 0
         # Training epoch
+        grad_alignment = []
         for batch in tqdm(train_loader, desc=f'{time}Training epoch {epoch+1}'):
             indices, epsilons, x, y = batch
             x, y = x.to(args.device), y.to(args.device)
@@ -289,7 +290,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 grad1 = grad_unif_pert.reshape(len(grad_unif_pert), -1)
                 grad2 =  grad_clean.reshape(len(grad_clean), -1)
                 cos_sim = torch.nn.functional.cosine_similarity(grad1, grad2, 1)
-                grad_alignment = cos_sim.mean().item()
+                grad_alignment.append(cos_sim.mean().item())
                 reg = args.grad_align_lambda * (1.0 - cos_sim.mean())
                 total_loss = total_loss + reg
             clean_error_samples += (torch.argmax(y_clean_score, dim=1) != y).sum().item()
@@ -436,7 +437,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             logging_step_sizes = torch.clamp(logging_step_sizes, args.atas_min_step_size, args.atas_max_step_size)
             wandb_log_dict['ATAS/ Step-Size mean'] = logging_step_sizes.mean().item()
         if args.GradAlign:
-            wandb_log_dict['GradAlign/Gradients Alignment'] = grad_alignment
+            wandb_log_dict['GradAlign/Gradients Alignment'] = sum(grad_alignment)/len(grad_alignment)
         # Actual logging
         wandb.log(wandb_log_dict)
         
