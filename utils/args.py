@@ -17,7 +17,8 @@ def get_args(description=""):
     parser.add_argument('--use_clean_loss', action='store_true', help='Whether to use clean loss')
     parser.add_argument('-m', '--model_name', choices=['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'resnet34', 'preact_resnet18', 'resnet50'] ,default='resnet50')
     parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='SGD')
-    parser.add_argument('--scheduler', type=str, choices=['MultiStepLR', 'WarmupCosineLR', 'CyclicLR'], help='The scheduler type for the learning rate.', default='WarmupCosineLR')
+    parser.add_argument('--scheduler', type=str, choices=['MultiStepLR', 'WarmupCosineLR', 'CyclicLR', 'CosineAnnealingWarmRestarts'],
+                        help='The scheduler type for the learning rate.', default='WarmupCosineLR')
     parser.add_argument('--warmup_ratio', type=float, default=0.5, help='The warmup ratio for the WarmupCosineLR scheduler. A float between 0 and 1.')
     parser.add_argument('-e', '--max_epochs', type=int, default=50, help='Give number of epochs for training')
     parser.add_argument('--pgd_num_steps', type=int, default=2, help='Number of PGD training iterations')

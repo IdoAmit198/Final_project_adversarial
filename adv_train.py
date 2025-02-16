@@ -15,6 +15,13 @@ from utils.uncertainty_metrics import log_uncertainty
 from utils.warm_schduler import WarmupCosineLR
 
 def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = None):
+    # If epsilons are all zeros, no need to run PGD, simply return x.
+    if isinstance(epsilons, torch.Tensor):
+        if not torch.any(epsilons):
+            return x
+    elif isinstance(epsilons, (int, float)):
+        if epsilons == 0:
+            return x
     model.eval()
     # Freeze model for the PGD attack
     for p in model.parameters():
@@ -24,12 +31,7 @@ def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = No
     for i in range(pgd_num_steps):
         with torch.autocast(device_type='cuda', dtype=torch.float16):
             y_score = model(x_pert)
-            # print(f"x_pert shape: {x_pert.shape}")
-            # print(f"y_score shape: {y_score.shape} , y shape: {y.shape}")
             loss = F.cross_entropy(y_score, y)
-            a=1
-        # print()
-        # scaled_loss = args.scaler.scale(loss)
         grad = torch.autograd.grad(loss.mean(), [x_pert])[0].detach()
         x_grad = torch.sign(grad)
         if gdnorms is not None:
@@ -39,13 +41,6 @@ def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = No
                 step_sizes = torch.clamp(step_sizes, args.atas_min_step_size, args.atas_max_step_size)
             pgd_step_size = step_sizes.view(-1, 1, 1, 1).expand_as(grad)
             gdnorms = cur_gdnorm
-            # print("#"*30)
-            # print(f"grad shape: {grad.shape}")
-            # print(f"pgd_step_size shape: {pgd_step_size.shape}")
-            # print(f"step_sizes shape: {step_sizes.shape}")
-            # print(f"gdnorms:\n{gdnorms}")
-            # print(f"step_sizes\n{step_sizes}")
-            # print("#"*30)
         else:
             pgd_step_size = epsilons*args.pgd_step_size_factor
         pgd_grad_step = pgd_step_size*x_grad
@@ -126,6 +121,8 @@ def configure_optimizers(model, train_dataloader, args):
     total_steps = args.max_epochs * steps_per_epoch
     if args.scheduler == "WarmupCosineLR":
         scheduler = WarmupCosineLR(optimizer, warmup_epochs=total_steps * args.warmup_ratio, max_epochs=total_steps)
+    elif args.scheduler == "CosineAnnealingWarmRestarts":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=steps_per_epoch, T_mult=1, eta_min=args.learning_rate/10)
     elif args.scheduler == "MultiStepLR":
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[total_steps*0.4, total_steps*0.7, total_steps*0.9], gamma=0.1)
     elif args.scheduler == "CyclicLR":
@@ -163,8 +160,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
     val_best_accuracy = 0
     for epoch in range(args.max_epochs):
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
-        # if re_introduce_cur_prob < args.re_introduce_prob:
-        #     re_introduce_cur_prob += re_introduce_prob_step_size
         
         epoch_loss_pert = 0
         loss_targeted_epoch = 0
@@ -306,14 +301,12 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             
             optimizer.zero_grad()
             total_loss.backward()
-            # Calculate the mean gradient across all parameters in model
-            mean_grad = 0
-            for p in model.parameters():
-                mean_grad += p.grad.mean().item()
             # optimizer.step()
             # args.scaler.step(optimizer)
             # scheduler.step()
             step()
+            # log learing rate
+            # wandb.log({"train_lr": scheduler.get_last_lr()[0]})
             # args.scaler.update()
             # Empty cache
             # del x, x_pert, y
@@ -331,8 +324,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
 
         # Validation epoch each epoch to evaluate the model and save the best model.
         model.eval()
-        # validation_16_error_samples = 0
-        # validation_32_error_samples = 0
         validation_samples_counter = 0
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         # validation_epsilons = [0, 8/255, 16/255, 32/255]
@@ -348,23 +339,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_score = model(val_x_pert)
                 epsilons_error_samples[idx] += (y_score.argmax(dim=1) != val_y).sum().item()
-                # incorrect = score != val_y
-                # epsilons_error_samples[idx] += incorrect.sum().item()
-            # val_x_pert_16 = PGD(model, val_x, val_y, 16, 20, args)
-            # val_x_pert_32 = PGD(model, val_x, val_y, 32, 20, args)
-            # with torch.autocast(device_type='cuda', dtype=torch.float16):
-            #     y_score_16 = model(val_x_pert_16)
-            #     y_score_32 = model(val_x_pert_32)
-            # y_pred_16 = torch.argmax(y_score_16, dim=1)
-            # y_pred_32 = torch.argmax(y_score_32, dim=1)
-            # incorrect_16 = y_pred_16!=val_y
-            # incorrect_32 = y_pred_32!=val_y
-            # validation_16_error_samples += incorrect_16.sum().item()
-            # validation_32_error_samples += incorrect_32.sum().item()
-            # del val_x, val_x_pert, val_y
-            # torch.cuda.empty_cache()
-        # validation_16_accuracy = 1 - validation_16_error_samples/validation_samples_counter
-        # validation_32_accuracy = 1 - validation_32_error_samples/validation_samples_counter
+
         validation_accuracy_list = [1 - epsilon_error_sample/validation_samples_counter for epsilon_error_sample in epsilons_error_samples]
         
         # validation_epsilons_weights = [0.1, 0.04305, 0.01853, 0.00343]
@@ -377,7 +352,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             print("Saving model...")
             torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
             print(f"Model saved at {args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
-            # torch.save(model.state_dict(), f"{args.save_dir}/best_model.pth")
         print(f"Epoch {epoch+1}: Validation Accuracy: {validation_accuracy*100}%, Best Validation Accuracy: {val_best_accuracy*100}%")
 
         # Eval epoch for each 5 epochs
@@ -391,7 +365,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 x, y = x.to(args.device), y.to(args.device)
                 test_samples_counter += x.shape[0]
                 x_pert = PGD(model, x, y, args.max_epsilon, 20, args)
-                # with torch.cuda.amp.autocast():
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_score = model(x_pert)
                     test_loss_pert += F.cross_entropy(y_score, y).item()
@@ -401,7 +374,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 incorrect = y_pred!=y
                 test_error_samples += incorrect.sum().item()
                 del x, x_pert, y
-                # torch.cuda.empty_cache()
 
             test_accuracy = 1 - test_error_samples/test_samples_counter
             print(f"Epoch {epoch+1}: Test Accuracy: {test_accuracy*100}%, Test Loss: {test_loss_pert/len(test_loader)}")
@@ -426,7 +398,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                             "Epsilons_metrics/mean_epsilon": mean_epsilon,
                             "Epoch":epoch+1
         }
-        # if args.use_clean_loss:
         wandb_log_dict["Train epochs clean loss"] = loss_clean_epoch/len(train_loader)
         wandb_log_dict["Train Clean epochs accuracy"] = train_clean_accuracy*100
         if args.agnostic_loss:
@@ -440,16 +411,4 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             wandb_log_dict['GradAlign/Gradients Alignment'] = sum(grad_alignment)/len(grad_alignment)
         # Actual logging
         wandb.log(wandb_log_dict)
-        
-
-    # Save the trained model at given path and verify whether the directory exists
-    # additional_folder = 'sanity_check/' if args.sanity_check else ''
-    # save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
-    # if os.path.exists(save_dir) and args.sanity_check:
-    #     print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
-    #     additional_folder = 'sanity_check_2-new/'
-    #     save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
-    # if not os.path.exists(save_dir):
-    #     os.makedirs(save_dir)
-    # torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
         
