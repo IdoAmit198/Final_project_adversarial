@@ -71,13 +71,16 @@ def adv_eval(model, test_loader, args, evaluated_epsilon, uncertainty_evaluation
     samples_certainties = torch.empty((0, 2))
     for batch in test_loader:
         # Load only the samples, no need for the epsilons nor indices since we won't modify those.
-        _, _, x, y = batch
+        if len(batch) == 4:
+            _, _, x, y = batch
+        else:
+            x, y = batch
         x, y = x.to(args.device), y.to(args.device)
         test_samples_counter += x.shape[0]
         x_pert = PGD(model, x, y, evaluated_epsilon, 100, args)
         # Freeze model for evaluation after PGD unfreezed it.
-        for p in model.parameters():
-            p.requires_grad = False
+        # for p in model.parameters():
+        #     p.requires_grad = False
         # Model isn't training so if we don't train a PGD attack, no need for gradients.
         with torch.no_grad():
             with torch.autocast(device_type='cuda', dtype=torch.float16):

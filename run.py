@@ -8,7 +8,7 @@ from utils.models import wide_resnet
 from utils.models.preact_resnet import PreActResNet18 
 import torch
 import torchvision
-from utils.data import load_dataloaders
+from utils.data import load_dataloaders, get_stratified_subset_dataloader
 from adv_train import adv_training, adv_eval
 from torch.amp import GradScaler
 
@@ -154,7 +154,7 @@ if __name__ == '__main__':
         if args.fine_tune == 'clean':
             weights = "IMAGENET1K_V2"
         elif args.fine_tune == 'adversarial':
-            pass
+            raise NotImplementedError("Fine-tuning adversarial models is not supported yet.")
         model = torchvision.models.get_model(args.model_name,num_classes=args.num_classes, weights=weights)
     
     timezone = pytz.timezone('Asia/Jerusalem')
@@ -241,9 +241,13 @@ if __name__ == '__main__':
         # model.load_state_dict(torch.load(args.eval_model_path))
         print("Model loaded")
         model = model.to(args.device)
+        model.forward = torch.compile(model.forward)
         print(f"path: {args.eval_model_path}")
         # Extract the eval_model_ath dir out of the args.eval_model_path path, by ignoring the pth file at the suffix
-        save_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
+        if args.save_dir:
+            save_dir = args.save_dir
+        else:
+            save_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
         print(f"save_dir: {save_dir}")
         eval_trained_epsilon = args.eval_model_path.split('/')[-1]
         eval_trained_epsilon = re.search('[\d][\d]?', eval_trained_epsilon).group()
@@ -271,12 +275,16 @@ if __name__ == '__main__':
             train_results = []
         args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
         # Initialize scaler for amp
-        args.scaler = GradScaler()
+        # args.scaler = GradScaler()
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
+        
+        # Taking a subset of 10K samples from the train_loader for evaluation
+        subset_train_loader = get_stratified_subset_dataloader(train_loader, 10000)
+
         for epsilon in tqdm(epsilons_list, desc=f'{time}Eval'):
             test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if acc_eval:
-                train_acc, _ = adv_eval(model, train_loader, args, epsilon/255, uncertainty_evaluation=False)
+                train_acc, _ = adv_eval(model, subset_train_loader, args, epsilon/255, uncertainty_evaluation=False)
                 train_results.append(train_acc)
                 eval_results.append(test_acc)
                 print(f"Evaluated epsilon:{epsilon} , Test Accuracy: {eval_results[-1]*100}% , Train Accuracy: {train_results[-1]*100}%")

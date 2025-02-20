@@ -7,7 +7,7 @@ def get_args(description=""):
     # parser.add_argument('--Train', action='store_false', help='Whether to train a model or not.')
     parser.add_argument('--Train', action='store_true', help='Whether to train a model or not.')
     parser.add_argument('--Inference', action='store_true', help='Whether to evaluate the model on different epsilons. Defaults to True.')
-    parser.add_argument('--fine_tune', type=str, default='clean', choices=['clean', 'adversarial', None],
+    parser.add_argument('--fine_tune', type=str, default=None, choices=['clean', 'adversarial', None],
                         help='Whether to fine-tune a clean or an adversarial checkpoint model. Defaults to None, which does not fine-tune at all.')
     parser.add_argument('-s', '--seed', type=int, default=42, help='Give random seed')
     parser.add_argument('-d', '--dataset',
