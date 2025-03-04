@@ -155,7 +155,9 @@ if __name__ == '__main__':
             weights = "IMAGENET1K_V2"
         elif args.fine_tune == 'adversarial':
             raise NotImplementedError("Fine-tuning adversarial models is not supported yet.")
-        model = torchvision.models.get_model(args.model_name,num_classes=args.num_classes, weights=weights)
+        model = torchvision.models.get_model(args.model_name, weights=weights)
+    if args.fine_tune and args.model_name.startswith('resnet'):
+        model.fc = torch.nn.Linear(model.fc.in_features, args.num_classes)
     
     timezone = pytz.timezone('Asia/Jerusalem')
     # args.Train = True
