@@ -8,9 +8,9 @@ from utils.models import wide_resnet
 from utils.models.preact_resnet import PreActResNet18 
 import torch
 import torchvision
-from utils.data import load_dataloaders
+from utils.data import load_dataloaders, get_stratified_subset_dataloader
 from adv_train import adv_training, adv_eval
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 
 import pandas as pd
 import re
@@ -113,6 +113,8 @@ if __name__ == '__main__':
 
     args = get_args(description='Adversarial training')
     # args.Train = True
+    # args.fine_tune = 'clean'
+    # args.GradAlign = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
     if args.pgd_num_steps == 1:
@@ -123,8 +125,8 @@ if __name__ == '__main__':
         args.pgd_step_size_factor = 0.2
     
     # Adjust learning rate in ase of fine-tuning
-    if args.fine_tune:
-        args.learning_rate /= 10
+    # if args.fine_tune:
+    #     args.learning_rate /= 10
         
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -137,27 +139,32 @@ if __name__ == '__main__':
     print(f"args:\n{args}")
     
     train_loader, validation_loader, test_loader = load_dataloaders(args)
-    num_classes=10 # Cifar10
+    args.num_classes=10 # Cifar10
     if args.dataset in ['cifar100', 'imagenet100']:
-        num_classes = 100
+        args.num_classes = 100
     elif args.dataset == 'imagenet':
-        num_classes = 1000
+        args.num_classes = 1000
     if 'wide' in args.model_name.lower():
-        model = getattr(wide_resnet, args.model_name)(num_classes=num_classes)
+        model = getattr(wide_resnet, args.model_name)(num_classes=args.num_classes)
     elif 'preact' in args.model_name.lower():
         args.atas_c = 0.01
-        model = PreActResNet18(num_classes=num_classes)
+        model = PreActResNet18(num_classes=args.num_classes)
     else:
         weights = None
         if args.fine_tune == 'clean':
             weights = "IMAGENET1K_V2"
         elif args.fine_tune == 'adversarial':
-            pass
-        model = torchvision.models.get_model(args.model_name,num_classes=num_classes, weights=weights)
+            raise NotImplementedError("Fine-tuning adversarial models is not supported yet.")
+        model = torchvision.models.get_model(args.model_name, weights=weights)
+    if args.fine_tune and args.model_name.startswith('resnet'):
+        model.fc = torch.nn.Linear(model.fc.in_features, args.num_classes)
     
     timezone = pytz.timezone('Asia/Jerusalem')
+    # args.Train = True
     if args.Train:
         model = model.to(args.device)
+        # model = torch.compile(model)
+        model.forward = torch.compile(model.forward)
         if args.optimizer == 'Adam':
             # TODO: Refactor later to better practice.
             args.learning_rate = 1e-3
@@ -174,16 +181,23 @@ if __name__ == '__main__':
         wandb.define_metric("Test epochs loss", step_metric="Epoch")
         wandb.define_metric("Train epochs clean loss", step_metric="Epoch")
         wandb.define_metric("Train epochs targeted loss", step_metric="Epoch")
-        wandb.define_metric("Validation epochs accuracy", step_metric="Epoch")
-        wandb.define_metric("Validation best accuracy", step_metric="Epoch")
+        # wandb.define_metric("Validation epochs accuracy", step_metric="Epoch")
+        # wandb.define_metric("Validation best accuracy", step_metric="Epoch")
+        wandb.define_metric("Validation/Mean Validation accuracy", step_metric="Epoch")
+        wandb.define_metric("Validation/Clean Accuracy", step_metric="Epoch")
+        wandb.define_metric(f"Validation/Epsilon 4", step_metric="Epoch")
+        wandb.define_metric(f"Validation/Epsilon 8", step_metric="Epoch")
+        wandb.define_metric(f"Validation/Epsilon 16", step_metric="Epoch")
+        wandb.define_metric("Validation/Validation best accuracy", step_metric="Epoch")
+
         wandb.define_metric("Epsilons_metrics/min_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/max_epsilon", step_metric="Epoch")
         wandb.define_metric("Epsilons_metrics/mean_epsilon", step_metric="Epoch")
-        wandb.define_metric("Epsilons_metrics/re_introduce_cur_prob", step_metric="Epoch")
-        wandb.define_metric("train_lr", step_metric="Epoch")
+        # wandb.define_metric("Epsilons_metrics/re_introduce_cur_prob", step_metric="Epoch")
+        # wandb.define_metric("train_lr", step_metric="step")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
-        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}"
+        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/GradAlign_{args.GradAlign}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}/schdeuler_{args.scheduler}/lr_{args.learning_rate}"
         if os.path.exists(save_dir) and args.sanity_check:
             print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
             additional_folder = 'sanity_check_2-new/'
@@ -229,9 +243,13 @@ if __name__ == '__main__':
         # model.load_state_dict(torch.load(args.eval_model_path))
         print("Model loaded")
         model = model.to(args.device)
+        model.forward = torch.compile(model.forward)
         print(f"path: {args.eval_model_path}")
         # Extract the eval_model_ath dir out of the args.eval_model_path path, by ignoring the pth file at the suffix
-        save_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
+        if args.save_dir:
+            save_dir = args.save_dir
+        else:
+            save_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
         print(f"save_dir: {save_dir}")
         eval_trained_epsilon = args.eval_model_path.split('/')[-1]
         eval_trained_epsilon = re.search('[\d][\d]?', eval_trained_epsilon).group()
@@ -259,12 +277,16 @@ if __name__ == '__main__':
             train_results = []
         args.rc_curve_save_pth = f'{save_dir}/rc_curve_{eval_trained_epsilon}.pkl'
         # Initialize scaler for amp
-        args.scaler = GradScaler()
+        # args.scaler = GradScaler()
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
+        
+        # Taking a subset of 10K samples from the train_loader for evaluation
+        subset_train_loader = get_stratified_subset_dataloader(train_loader, 10000)
+
         for epsilon in tqdm(epsilons_list, desc=f'{time}Eval'):
             test_acc, uncertainty_dict = adv_eval(model, test_loader, args, epsilon/255, uncertainty_evaluation=args.eval_uncertainty)
             if acc_eval:
-                train_acc, _ = adv_eval(model, train_loader, args, epsilon/255, uncertainty_evaluation=False)
+                train_acc, _ = adv_eval(model, subset_train_loader, args, epsilon/255, uncertainty_evaluation=False)
                 train_results.append(train_acc)
                 eval_results.append(test_acc)
                 print(f"Evaluated epsilon:{epsilon} , Test Accuracy: {eval_results[-1]*100}% , Train Accuracy: {train_results[-1]*100}%")

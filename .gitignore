@@ -1,7 +1,7 @@
 **/cifar-10*/**
 **/*.pyc
 **/*.gz
-**/*.csv
+**/*csv
 **/*.json
 **/*json
 **/wandb/**

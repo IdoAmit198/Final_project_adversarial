@@ -15,6 +15,13 @@ from utils.uncertainty_metrics import log_uncertainty
 from utils.warm_schduler import WarmupCosineLR
 
 def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = None):
+    # If epsilons are all zeros, no need to run PGD, simply return x.
+    if isinstance(epsilons, torch.Tensor):
+        if not torch.any(epsilons):
+            return x
+    elif isinstance(epsilons, (int, float)):
+        if epsilons == 0:
+            return x
     model.eval()
     # Freeze model for the PGD attack
     for p in model.parameters():
@@ -24,13 +31,8 @@ def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = No
     for i in range(pgd_num_steps):
         with torch.autocast(device_type='cuda', dtype=torch.float16):
             y_score = model(x_pert)
-            # print(f"x_pert shape: {x_pert.shape}")
-            # print(f"y_score shape: {y_score.shape} , y shape: {y.shape}")
             loss = F.cross_entropy(y_score, y)
-        #     print()
-        # print()
-        scaled_loss = args.scaler.scale(loss)
-        grad = torch.autograd.grad(scaled_loss.mean(), [x_pert])[0].detach()
+        grad = torch.autograd.grad(loss.mean(), [x_pert])[0].detach()
         x_grad = torch.sign(grad)
         if gdnorms is not None:
             with torch.no_grad():
@@ -39,13 +41,6 @@ def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = No
                 step_sizes = torch.clamp(step_sizes, args.atas_min_step_size, args.atas_max_step_size)
             pgd_step_size = step_sizes.view(-1, 1, 1, 1).expand_as(grad)
             gdnorms = cur_gdnorm
-            # print("#"*30)
-            # print(f"grad shape: {grad.shape}")
-            # print(f"pgd_step_size shape: {pgd_step_size.shape}")
-            # print(f"step_sizes shape: {step_sizes.shape}")
-            # print(f"gdnorms:\n{gdnorms}")
-            # print(f"step_sizes\n{step_sizes}")
-            # print("#"*30)
         else:
             pgd_step_size = epsilons*args.pgd_step_size_factor
         pgd_grad_step = pgd_step_size*x_grad
@@ -76,18 +71,21 @@ def adv_eval(model, test_loader, args, evaluated_epsilon, uncertainty_evaluation
     samples_certainties = torch.empty((0, 2))
     for batch in test_loader:
         # Load only the samples, no need for the epsilons nor indices since we won't modify those.
-        _, _, x, y = batch
+        if len(batch) == 4:
+            _, _, x, y = batch
+        else:
+            x, y = batch
         x, y = x.to(args.device), y.to(args.device)
         test_samples_counter += x.shape[0]
         x_pert = PGD(model, x, y, evaluated_epsilon, 100, args)
         # Freeze model for evaluation after PGD unfreezed it.
-        for p in model.parameters():
-            p.requires_grad = False
+        # for p in model.parameters():
+        #     p.requires_grad = False
         # Model isn't training so if we don't train a PGD attack, no need for gradients.
         with torch.no_grad():
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 y_score = model(x_pert)
-        y_score = args.scaler.scale(y_score)
+        # y_score = args.scaler.scale(y_score)
         y_pred = torch.argmax(y_score, dim=1)
         incorrect = y_pred!=y
         test_error_samples += incorrect.sum().item()
@@ -110,7 +108,7 @@ def configure_optimizers(model, train_dataloader, args):
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(
             model.parameters(),
-            lr=args.learning_rate,
+            lr=torch.tensor(args.learning_rate),
             weight_decay=args.weight_decay,
             momentum=args.momentum,
             nesterov=True
@@ -118,7 +116,7 @@ def configure_optimizers(model, train_dataloader, args):
     elif args.optimizer == 'ADAM':
         optimizer = torch.optim.Adam(
             model.parameters(),
-            lr=args.learning_rate,
+            lr=torch.tensor(args.learning_rate),
             weight_decay=args.weight_decay,
         )
 
@@ -126,6 +124,8 @@ def configure_optimizers(model, train_dataloader, args):
     total_steps = args.max_epochs * steps_per_epoch
     if args.scheduler == "WarmupCosineLR":
         scheduler = WarmupCosineLR(optimizer, warmup_epochs=total_steps * args.warmup_ratio, max_epochs=total_steps)
+    elif args.scheduler == "CosineAnnealingWarmRestarts":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=steps_per_epoch, T_mult=1, eta_min=args.learning_rate/10)
     elif args.scheduler == "MultiStepLR":
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[total_steps*0.4, total_steps*0.7, total_steps*0.9], gamma=0.1)
     elif args.scheduler == "CyclicLR":
@@ -139,6 +139,15 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
     timezone = pytz.timezone('Asia/Jerusalem')
     # Initialize the optimizer and the scheduler
     optimizer, scheduler = configure_optimizers(model, train_loader, args)
+    
+    @torch.compile(fullgraph=False)
+    def step():
+        """
+        compiled optimized step function.
+        Apply both the optimizer and scheduler step.
+        """
+        optimizer.step()
+        scheduler.step()
     # if args.ATAS:
     gdnorm_list = torch.zeros(len(train_loader.dataset), device=args.device)
     # Initialize augmentation transformation for clean samples:
@@ -154,8 +163,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
     val_best_accuracy = 0
     for epoch in range(args.max_epochs):
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
-        # if re_introduce_cur_prob < args.re_introduce_prob:
-        #     re_introduce_cur_prob += re_introduce_prob_step_size
         
         epoch_loss_pert = 0
         loss_targeted_epoch = 0
@@ -165,6 +172,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         train_error_samples = 0
         clean_error_samples = 0
         # Training epoch
+        grad_alignment = []
         for batch in tqdm(train_loader, desc=f'{time}Training epoch {epoch+1}'):
             indices, epsilons, x, y = batch
             x, y = x.to(args.device), y.to(args.device)
@@ -222,7 +230,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 gdnorm_list[indices] = new_gdnorm_batch
             if args.agnostic_loss:
                 # Generate y_targeted with random different labels than y
-                y_targeted = torch.randint(0, 9, (x.shape[0],), device=args.device)
+                y_targeted = torch.randint(0, args.num_classes - 1, (x.shape[0],), device=args.device)
                 y_targeted[y_targeted>=y] += 1
                 x_targeted_pert = PGD(model, x, y_targeted, epsilons_to_pgd, args.pgd_num_steps, args, targeted=True, gdnorms=gdnorm_batch)
                 if args.ATAS:
@@ -240,27 +248,27 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 loss_clean = F.cross_entropy(y_clean_score, y)
                 a=1
             # if args.use_clean_loss:
-            scaled_loss_clean = args.scaler.scale(loss_clean)
-            scaled_loss_pert = args.scaler.scale(loss_pert)
+            # scaled_loss_clean = args.scaler.scale(loss_clean)
+            # scaled_loss_pert = args.scaler.scale(loss_pert)
             epoch_loss_pert += loss_pert.item()
             if args.agnostic_loss:
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_score_targeted = model(x_targeted_pert)
                     loss_targeted = F.cross_entropy(y_score_targeted, y)
-                scaled_loss_targeted = args.scaler.scale(loss_targeted)
+                # scaled_loss_targeted = args.scaler.scale(loss_targeted)
                 if args.use_clean_loss:
-                    total_loss = (scaled_loss_pert + scaled_loss_clean + scaled_loss_targeted)/3
+                    total_loss = (loss_pert + loss_clean + loss_targeted)/3
                     total_loss_epoch += (loss_pert + loss_clean + loss_targeted).item()/3
                 else:
-                    total_loss = (scaled_loss_pert + scaled_loss_targeted)/2
+                    total_loss = (loss_pert + loss_targeted)/2
                     total_loss_epoch += (loss_pert + loss_targeted).item()/2
                 loss_targeted_epoch += loss_targeted.item()
             else:
                 if args.use_clean_loss:
-                    total_loss = (scaled_loss_pert + scaled_loss_clean)/2
+                    total_loss = (loss_pert + loss_clean)/2
                     total_loss_epoch += (loss_pert + loss_clean).item()/2
                 else:
-                    total_loss = scaled_loss_pert
+                    total_loss = loss_pert
                     total_loss_epoch += loss_pert.item()
             # If we use GradAlign, make another computation, and add it to the total loss term.
             if args.GradAlign:
@@ -271,16 +279,16 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_unif_score = model(x_clone)
                     unif_pert_loss = F.cross_entropy(y_unif_score, y)
-                scaled_unif_pert_loss = args.scaler.scale(unif_pert_loss)
+                # scaled_unif_pert_loss = args.scaler.scale(unif_pert_loss)
                 # scaled_clean_loss = args.scaler.scale(clean_loss)
                 # Compute the gradients w.r.t the input sample
-                grad_unif_pert = torch.autograd.grad(scaled_unif_pert_loss.mean(), [x_clone])[0].detach()
+                grad_unif_pert = torch.autograd.grad(unif_pert_loss.mean(), [x_clone])[0].detach()
                 # Utilize the already computed clean loss from above
-                grad_clean = torch.autograd.grad(scaled_loss_clean.mean(), [x_augmented])[0].detach()
+                grad_clean = torch.autograd.grad(loss_clean.mean(), [x_augmented])[0].detach()
                 grad1 = grad_unif_pert.reshape(len(grad_unif_pert), -1)
                 grad2 =  grad_clean.reshape(len(grad_clean), -1)
                 cos_sim = torch.nn.functional.cosine_similarity(grad1, grad2, 1)
-                grad_alignment = cos_sim.mean().item()
+                grad_alignment.append(cos_sim.mean().item())
                 reg = args.grad_align_lambda * (1.0 - cos_sim.mean())
                 total_loss = total_loss + reg
             clean_error_samples += (torch.argmax(y_clean_score, dim=1) != y).sum().item()
@@ -296,14 +304,13 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             
             optimizer.zero_grad()
             total_loss.backward()
-            # Calculate the mean gradient across all parameters in model
-            mean_grad = 0
-            for p in model.parameters():
-                mean_grad += p.grad.mean().item()
             # optimizer.step()
-            args.scaler.step(optimizer)
-            scheduler.step()
-            args.scaler.update()
+            # args.scaler.step(optimizer)
+            # scheduler.step()
+            step()
+            # log learing rate
+            # wandb.log({"train_lr": scheduler.get_last_lr()[0]})
+            # args.scaler.update()
             # Empty cache
             # del x, x_pert, y
             # torch.cuda.empty_cache()
@@ -320,8 +327,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
 
         # Validation epoch each epoch to evaluate the model and save the best model.
         model.eval()
-        # validation_16_error_samples = 0
-        # validation_32_error_samples = 0
         validation_samples_counter = 0
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         # validation_epsilons = [0, 8/255, 16/255, 32/255]
@@ -329,31 +334,15 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         epsilons_error_samples = [0] * len(validation_epsilons)
 
         for batch in tqdm(validation_loader, desc=f'{time}Validation epoch {epoch+1}'):
-            indices, epsilons, val_x, val_y = batch
+            _, _, val_x, val_y = batch
             val_x, val_y = val_x.to(args.device), val_y.to(args.device)
             validation_samples_counter += val_x.shape[0]
             for idx, val_epsilon in enumerate(validation_epsilons):
                 val_x_pert = PGD(model, val_x, val_y, val_epsilon, 20, args)
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_score = model(val_x_pert)
-                score = torch.argmax(y_score, dim=1)
-                incorrect = score != val_y
-                epsilons_error_samples[idx] += incorrect.sum().item()
-            # val_x_pert_16 = PGD(model, val_x, val_y, 16, 20, args)
-            # val_x_pert_32 = PGD(model, val_x, val_y, 32, 20, args)
-            # with torch.autocast(device_type='cuda', dtype=torch.float16):
-            #     y_score_16 = model(val_x_pert_16)
-            #     y_score_32 = model(val_x_pert_32)
-            # y_pred_16 = torch.argmax(y_score_16, dim=1)
-            # y_pred_32 = torch.argmax(y_score_32, dim=1)
-            # incorrect_16 = y_pred_16!=val_y
-            # incorrect_32 = y_pred_32!=val_y
-            # validation_16_error_samples += incorrect_16.sum().item()
-            # validation_32_error_samples += incorrect_32.sum().item()
-            # del val_x, val_x_pert, val_y
-            # torch.cuda.empty_cache()
-        # validation_16_accuracy = 1 - validation_16_error_samples/validation_samples_counter
-        # validation_32_accuracy = 1 - validation_32_error_samples/validation_samples_counter
+                epsilons_error_samples[idx] += (y_score.argmax(dim=1) != val_y).sum().item()
+
         validation_accuracy_list = [1 - epsilon_error_sample/validation_samples_counter for epsilon_error_sample in epsilons_error_samples]
         
         # validation_epsilons_weights = [0.1, 0.04305, 0.01853, 0.00343]
@@ -366,7 +355,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             print("Saving model...")
             torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
             print(f"Model saved at {args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
-            # torch.save(model.state_dict(), f"{args.save_dir}/best_model.pth")
         print(f"Epoch {epoch+1}: Validation Accuracy: {validation_accuracy*100}%, Best Validation Accuracy: {val_best_accuracy*100}%")
 
         # Eval epoch for each 5 epochs
@@ -376,11 +364,10 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             test_loss_pert = 0
             time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
             for batch in tqdm(test_loader, desc=f'{time}Eval epoch {epoch+1}'):
-                indices, epsilons, x, y = batch
+                _, _, x, y = batch
                 x, y = x.to(args.device), y.to(args.device)
                 test_samples_counter += x.shape[0]
                 x_pert = PGD(model, x, y, args.max_epsilon, 20, args)
-                # with torch.cuda.amp.autocast():
                 with torch.autocast(device_type='cuda', dtype=torch.float16):
                     y_score = model(x_pert)
                     test_loss_pert += F.cross_entropy(y_score, y).item()
@@ -390,7 +377,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                 incorrect = y_pred!=y
                 test_error_samples += incorrect.sum().item()
                 del x, x_pert, y
-                # torch.cuda.empty_cache()
 
             test_accuracy = 1 - test_error_samples/test_samples_counter
             print(f"Epoch {epoch+1}: Test Accuracy: {test_accuracy*100}%, Test Loss: {test_loss_pert/len(test_loader)}")
@@ -415,7 +401,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                             "Epsilons_metrics/mean_epsilon": mean_epsilon,
                             "Epoch":epoch+1
         }
-        # if args.use_clean_loss:
         wandb_log_dict["Train epochs clean loss"] = loss_clean_epoch/len(train_loader)
         wandb_log_dict["Train Clean epochs accuracy"] = train_clean_accuracy*100
         if args.agnostic_loss:
@@ -426,19 +411,7 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             logging_step_sizes = torch.clamp(logging_step_sizes, args.atas_min_step_size, args.atas_max_step_size)
             wandb_log_dict['ATAS/ Step-Size mean'] = logging_step_sizes.mean().item()
         if args.GradAlign:
-            wandb_log_dict['GradAlign/Gradients Alignment'] = grad_alignment
+            wandb_log_dict['GradAlign/Gradients Alignment'] = sum(grad_alignment)/len(grad_alignment)
         # Actual logging
         wandb.log(wandb_log_dict)
-        
-
-    # Save the trained model at given path and verify whether the directory exists
-    # additional_folder = 'sanity_check/' if args.sanity_check else ''
-    # save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
-    # if os.path.exists(save_dir) and args.sanity_check:
-    #     print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
-    #     additional_folder = 'sanity_check_2-new/'
-    #     save_dir = f"saved_models/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}"
-    # if not os.path.exists(save_dir):
-    #     os.makedirs(save_dir)
-    # torch.save(model.state_dict(), f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth")
         

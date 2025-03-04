@@ -1,7 +1,10 @@
 from torch.utils.data import DataLoader, Subset
+from sklearn.model_selection import train_test_split
+
 from torchvision import datasets
 from torchvision.transforms import v2
 from torchvision.datasets import VisionDataset
+import time
 
 import torch
 import numpy as np
@@ -68,12 +71,64 @@ class DatasetWithMeta(torch.utils.data.Dataset):
         return len(self.dataset)
 
 
+from pathlib import Path
+import json
+from functools import wraps
+from torchvision.datasets import ImageFolder
+import os
+
+from pathlib import Path
+import json
+from functools import wraps
+from torchvision.datasets import ImageFolder
+import os
+
+def file_cache(filename):
+    """Decorator to cache the output of a function to disk."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(self, directory, *args, **kwargs):
+            # Get the last two parts of the directory path (e.g., 'ImageNet/train' or 'ImageNet/val')
+            relative_path = str(Path(directory).relative_to(Path(directory).parent.parent))
+            
+            # Construct cache path by joining base cache dir with relative path
+            cache_path = Path(os.path.expanduser(self.cache_dir)) / relative_path
+            filepath = cache_path / filename
+            
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            
+            if filepath.is_file():
+                out = json.loads(filepath.read_text())
+            else:
+                out = f(self, directory, *args, **kwargs)
+                filepath.write_text(json.dumps(out))
+            return out
+        return decorated
+    return decorator
+
+class CachedImageFolder(ImageFolder):
+    def __init__(self, root, transform=None, target_transform=None, 
+                 cache_dir='~/adversarial_course/Final_project_adversarial/data/cache'):
+        self.cache_dir = cache_dir
+        super().__init__(root, transform=transform, target_transform=target_transform)
+
+    @file_cache(filename="cached_classes.json")
+    def find_classes(self, directory, *args, **kwargs):
+        classes = super().find_classes(directory, *args, **kwargs)
+        return classes
+
+    @file_cache(filename="cached_structure.json")
+    def make_dataset(self, directory, *args, **kwargs):
+        dataset = super().make_dataset(directory, *args, **kwargs)
+        return dataset
+
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
 def load_dataloaders(args, seed:int = 42):
+    start_time = time.time()
     batch_size = args.batch_size
     g = torch.Generator().manual_seed(seed)
     # g.manual_seed(seed)
@@ -113,8 +168,10 @@ def load_dataloaders(args, seed:int = 42):
 
     if 'imagenet' in args.dataset:
         print("Loading Imagenet dataset - might take a while. Grab a coffe.")
-        train_dataset = datasets.ImageFolder(root='/datasets/ImageNet/train', transform=train_transform)
-        test_dataset = datasets.ImageFolder(root='/datasets/ImageNet/val', transform=test_transform)
+        # train_dataset = datasets.ImageFolder(root='/datasets/ImageNet/train', transform=train_transform)
+        # test_dataset = datasets.ImageFolder(root='/datasets/ImageNet/val', transform=test_transform)
+        train_dataset = CachedImageFolder(root='/datasets/ImageNet/train', transform=train_transform)
+        test_dataset = CachedImageFolder(root='/datasets/ImageNet/val', transform=test_transform)
         if 'imagenet100' == args.dataset:
             # Identify classes to keep: labels divisible by 10
             filtered_classes = [class_name for idx, class_name in enumerate(train_dataset.classes) if idx % 10 == 0]
@@ -189,7 +246,53 @@ def load_dataloaders(args, seed:int = 42):
     validation_ds = DatasetWithMeta(validation_ds)
     test_ds = DatasetWithMeta(test_dataset)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=args.cpu_num, pin_memory=True,
-                              worker_init_fn=seed_worker, generator=g)
+                              worker_init_fn=seed_worker, generator=g, drop_last=True)
+    validation_loader = DataLoader(validation_ds, batch_size=int(batch_size), shuffle=False, num_workers=args.cpu_num, pin_memory=True, drop_last=True)
     test_loader = DataLoader(test_ds, batch_size=int(batch_size), shuffle=False, num_workers=args.cpu_num, pin_memory=True)
-    validation_loader = DataLoader(validation_ds, batch_size=int(batch_size), shuffle=False, num_workers=args.cpu_num, pin_memory=True)
+    end_time = time.time()
+    print(f"Data loading took {end_time - start_time:.3f} seconds.")
     return train_loader, validation_loader, test_loader
+
+
+def get_stratified_subset_dataloader(dataloader, subset_size, batch_size=None, shuffle=False):
+    """
+    Extracts a stratified subset of a dataset from a DataLoader and returns a new DataLoader.
+
+    Args:
+        dataloader (DataLoader): The original DataLoader.
+        subset_size (int): The number of samples to include in the subset.
+        batch_size (int, optional): Batch size for the new DataLoader. If None, uses the original batch size.
+        shuffle (bool): Whether to shuffle the new DataLoader.
+
+    Returns:
+        DataLoader: A new DataLoader containing only the stratified subset.
+    """
+    dataset = dataloader.dataset  # Extract dataset
+    # Check whether dataset is og type `DatasetWithMeta`
+    if isinstance(dataset, DatasetWithMeta):
+        dataset = dataset.dataset
+    if isinstance(dataset, Subset):
+        dataset = dataset.dataset
+    # Extract targets (assuming dataset has targets)
+    if hasattr(dataset, "targets"):  # For datasets like torchvision datasets
+        targets = np.array(dataset.targets)
+    elif hasattr(dataset, "labels"):  # Some datasets use "labels" instead of "targets"
+        targets = np.array(dataset.labels)
+    else:
+        raise ValueError("Dataset does not have a 'targets' or 'labels' attribute for stratification.")
+
+    # Get subset indices while preserving class distribution
+    indices = np.arange(len(dataset))
+    stratified_indices, _ = train_test_split(indices, train_size=subset_size, stratify=targets, random_state=42)
+
+    # Create subset
+    subset = Subset(dataset, stratified_indices)
+
+    # Use original batch size if not provided
+    if batch_size is None:
+        batch_size = dataloader.batch_size
+
+    # Create new DataLoader
+    subset_dataloader = DataLoader(subset, batch_size=batch_size, shuffle=shuffle, num_workers=dataloader.num_workers, pin_memory=True)
+
+    return subset_dataloader
