@@ -14,6 +14,9 @@ from datetime import datetime
 from utils.uncertainty_metrics import log_uncertainty
 from utils.warm_schduler import WarmupCosineLR
 
+from autoattack import AutoAttack
+import csv
+
 def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = None):
     # If epsilons are all zeros, no need to run PGD, simply return x.
     if isinstance(epsilons, torch.Tensor):
@@ -415,3 +418,124 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         # Actual logging
         wandb.log(wandb_log_dict)
         
+
+
+def evaluate_model_autoattack(model, dataloader, max_eps:int, csv_filename:str, device='cuda', attacks_names_list:list[str] = None):
+    """
+    Evaluates the L∞ robust accuracy of a model using AutoAttack over epsilons 1 to max_eps.
+    Also computes the clean accuracy of the model.
+    
+    Parameters:
+        model (torch.nn.Module): The trained model.
+        dataloader (torch.utils.data.DataLoader): Dataloader for the evaluation dataset.
+        max_eps (int): Maximum epsilon value (evaluated from 1 to max_eps; eps is scaled by 1/255).
+        device (str): Device to run evaluation on.
+        csv_filename (str): File name to save CSV results.
+        
+    Returns:
+        results (dict): Dictionary with keys 'clean_accuracy' and each epsilon mapping to robust accuracy.
+    """
+    model.eval()
+    model.to(device)
+    results = {eps: {} for eps in range(max_eps + 1)}
+    
+    # Compute clean accuracy over the dataloader
+    clean_correct = 0
+    total = 0
+    for batch in dataloader:
+        if len(batch) == 4:
+            _, _, images, labels = batch
+        else:
+            images, labels = batch
+        images, labels = images.to(device), labels.to(device)
+        with torch.no_grad():
+            preds = model(images).argmax(dim=1)
+        clean_correct += (preds == labels).sum().item()
+        total += labels.size(0)
+    clean_acc = clean_correct / total
+    print(f"Clean Accuracy: {clean_acc * 100:.2f}%")
+
+    # List of attacks to evaluate
+    attacks = ["apgd-ce", "apgd-dlr"] if attacks_names_list is None else attacks_names_list
+
+    # log clean accuracy
+    for attack in attacks:
+        results[0][attack] = clean_acc
+        wandb.log({
+            f"AA_Inference/{attack}": clean_acc*100,
+             "Epsilon":0})
+
+    # Loop over epsilon values from 1 to max_eps
+    for eps in range(1, max_eps + 1):
+        eps_scaled = eps / 255.0  # Scale epsilon for images in [0,1]
+        print(f"\nEvaluating epsilon {eps} (scaled: {eps_scaled:.5f})")
+        robust_correct = 0
+        total_batch = 0
+
+        # Evaluate each attack individually
+        for attack in attacks:
+            # Create an AutoAttack instance with only the chosen attack.
+            adversary = AutoAttack(model, norm='Linf', eps=eps_scaled, version='custom', 
+                                   attacks_to_run=[attack], device=device, verbose=False)
+            # Set parameters for each attack:
+            if attack == "apgd-ce":
+                # Untargeted APGD-CE with no restarts
+                adversary.apgd.n_restarts = 1
+            elif attack == "apgd-dlr":
+                # Targeted APGD-DLR: set to 9 target classes, no restarts.
+                adversary.apgd_targeted.n_restarts = 1
+                adversary.apgd_targeted.n_target_classes = 9
+
+            robust_correct_attack = 0
+            total_attack = 0
+            
+            # Process the dataset batch by batch
+            progress_bar = tqdm(dataloader, desc=f"Epsilon {eps}, Attack {attack}")
+            for batch in progress_bar:
+                if len(batch) == 4:
+                    _, _, images, labels = batch
+                else:
+                    images, labels = batch
+                images, labels = images.to(device), labels.to(device)
+                
+                # Run the attack on the batch.
+                # Note: run_standard_evaluation returns adversarial examples only for images that were
+                # initially correctly classified.
+                # print(f"Before running batch {batch_idx}")
+                _, non_robust_total_num = adversary.run_standard_evaluation(images, labels, bs=images.shape[0])
+                # print(f"After running batch {batch_idx}")
+                # with torch.no_grad():
+                #     preds = model(x_adv).argmax(dim=1)
+                robust_correct_attack += images.shape[0] - non_robust_total_num
+                total_attack += labels.size(0)
+                progress_bar.set_postfix(current_acc=f"{(robust_correct_attack/total_attack):.4f}")
+            
+            robust_acc_attack = (robust_correct_attack / total_attack)
+            results[eps][attack] = robust_acc_attack
+            print(f"Attack {attack} at epsilon {eps}: Robust Accuracy = {robust_acc_attack * 100:.2f}%")
+            wandb.log({
+            f"AA_Inference/{attack}": robust_acc_attack*100,
+             "Epsilon":eps})
+    
+    # --- Save results to a CSV file ---
+    # CSV columns: Attack name, Epsilons values starting from 0 to max_eps.
+    # Each row corresponds to the robust accuracy of the attack at the given epsilon.
+    with open(csv_filename, 'w', newline='') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(["Epsilon"] + attacks)
+        for eps in range(max_eps + 1):
+            csvwriter.writerow([eps] + [results[eps][attack] for attack in attacks])
+    
+    print("\nFinal Results:")
+    print(f"Clean Accuracy: {clean_acc * 100:.2f}%")
+    for attack in attacks:
+        print(f"Attack {attack}:")    
+        for eps in range(1, max_eps + 1):
+            print(f"Epsilon {eps}: {results[eps][attack] * 100:.2f}%")
+    print(f"\nResults saved to {csv_filename}")
+    
+    return results
+
+# Example usage:
+# Assume you have already defined your model and dataloader for your validation set.
+# results = evaluate_model_autoattack(model, dataloader, max_eps=32, device='cuda', csv_filename='results.csv')

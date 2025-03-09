@@ -54,5 +54,11 @@ def get_args(description=""):
     parser.add_argument('--atas_c', default=0.1, type=float, help='constant for ATAS')
     parser.add_argument('--atas_max_step_size', default=8/255, type=float, help='maximum perturb step size')
     parser.add_argument('--atas_min_step_size', default=4/255, type=float, help='minimum perturb step size')
+    # AutoAttack inference args
+    parser.add_argument('--AutoAttackInference', action='store_true', help='Whether to evaluate the model using AutoAttack.')
+    parser.add_argument('--aa_attacks_list', nargs="+", type=str, default=['apgd-ce'],
+                        help='List of AutoAttack attacks to be used. Defaults to apgd-ce.\n\
+                            Full list of avilable attacks can be found in the AutoAttack repository:\n\
+                            https://github.com/fra31/auto-attack/tree/master')
     args = parser.parse_args()
     return args

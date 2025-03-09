@@ -9,7 +9,7 @@ from utils.models.preact_resnet import PreActResNet18
 import torch
 import torchvision
 from utils.data import load_dataloaders, get_stratified_subset_dataloader
-from adv_train import adv_training, adv_eval
+from adv_train import adv_training, adv_eval, evaluate_model_autoattack
 from torch.amp import GradScaler
 
 import pandas as pd
@@ -32,6 +32,7 @@ def Inference_Args(args):
     eval_uncertainty_flag = args.eval_uncertainty
     device = args.device
     pgd_step_size_factor = args.pgd_step_size_factor
+    aa_attacks_list = args.aa_attacks_list
     try:
         with open(f'{eval_model_path_dir}/args.json', 'r') as f:
             loaded_args = json.load(f)
@@ -104,6 +105,7 @@ def Inference_Args(args):
     args.eval_epsilon_max = 32
     args.device = device
     args.pgd_step_size_factor = pgd_step_size_factor
+    args.aa_attacks_list = aa_attacks_list
     return args
         
 
@@ -113,7 +115,9 @@ if __name__ == '__main__':
 
     args = get_args(description='Adversarial training')
     # args.Train = True
-    # args.fine_tune = 'clean'
+    args.AutoAttackInference = True
+    args.dataset = 'imagenet100'
+    args.eval_model_path = 'saved_models/imagenet100/fine_tune_clean/resnet50/seed_42/train_method_adaptive/agnostic_loss_False/GradAlign_True/optimizer_SGD/pgd_steps_2/schdeuler_CosineAnnealingWarmRestarts/lr_0.001/max_epsilon_16.pth'
     # args.GradAlign = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
@@ -156,7 +160,7 @@ if __name__ == '__main__':
         elif args.fine_tune == 'adversarial':
             raise NotImplementedError("Fine-tuning adversarial models is not supported yet.")
         model = torchvision.models.get_model(args.model_name, weights=weights)
-    if args.fine_tune and args.model_name.startswith('resnet'):
+    if args.dataset == 'imagenet100' and args.model_name.startswith('resnet'):
         model.fc = torch.nn.Linear(model.fc.in_features, args.num_classes)
     
     timezone = pytz.timezone('Asia/Jerusalem')
@@ -214,6 +218,36 @@ if __name__ == '__main__':
         # Actual training
         adv_training(model, train_loader, validation_loader, test_loader, args)
     
+    if args.AutoAttackInference:
+        if args.Train:
+            args.eval_model_path = f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth"
+        else:
+            # args.log_name = f'{args.model_name}_train method_{args.train_method}_agnostic_loss_{args.agnostic_loss}_seed_{args.seed}_max epsilon_{int(args.max_epsilon*255)}'
+            # args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
+            args = Inference_Args(args)
+            # Init wandb
+            run = wandb.init(project="Adversarial-adaptive-project", name=f"AA_Inference_{args.log_name}", entity = "ido-shani-proj", config=args)
+        if os.path.isfile(args.eval_model_path):
+            model.load_state_dict(torch.load(args.eval_model_path))
+        else:
+            raise FileNotFoundError(f"Model file not found: {args.eval_model_path}")
+        # model.load_state_dict(torch.load(args.eval_model_path))
+        print("Model loaded")
+        # model.forward = torch.compile(model.forward)
+        # print(f"path: {args.eval_model_path}")
+        if args.save_dir:
+            save_dir = args.save_dir
+        else:
+            save_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
+        print(f"save_dir: {save_dir}")
+        
+        # Call evaluate_model_autoattack
+        results = evaluate_model_autoattack(model=model, dataloader=test_loader, max_eps=1, csv_filename=f'{args.save_dir}/autoattack_results.csv',
+                                            attacks_names_list=args.aa_attacks_list, device=args.device)
+        run.finish()
+        exit
+
+
     if args.Inference:
         if args.Train:
             args.eval_model_path = f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth"
