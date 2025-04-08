@@ -465,15 +465,16 @@ def evaluate_model_autoattack(model, dataloader, max_eps:int, csv_filename:str, 
             f"AA_Inference/{attack}": clean_acc*100,
              "Epsilon":0})
 
-    # Loop over epsilon values from 1 to max_eps
-    for eps in range(1, max_eps + 1):
-        eps_scaled = eps / 255.0  # Scale epsilon for images in [0,1]
-        print(f"\nEvaluating epsilon {eps} (scaled: {eps_scaled:.5f})")
-        robust_correct = 0
-        total_batch = 0
+    # Evaluate each attack individually
+    for attack in attacks:
+        
+        # Loop over epsilon values from 1 to max_eps
+        for eps in range(1, max_eps + 1):
+            eps_scaled = eps / 255.0  # Scale epsilon for images in [0,1]
+            print(f"\nEvaluating epsilon {eps} (scaled: {eps_scaled:.5f})")
+            robust_correct = 0
+            total_batch = 0
 
-        # Evaluate each attack individually
-        for attack in attacks:
             # Create an AutoAttack instance with only the chosen attack.
             adversary = AutoAttack(model, norm='Linf', eps=eps_scaled, version='custom', 
                                    attacks_to_run=[attack], device=device, verbose=False)
