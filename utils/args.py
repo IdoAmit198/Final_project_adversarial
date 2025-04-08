@@ -15,7 +15,8 @@ def get_args(description=""):
                         help='Give the dataset name from the choices. Currently, only Cifar-10 is supported.', default='imagenet')
     parser.add_argument('--augment', action='store_true', help='Whether to augment the training data')
     parser.add_argument('--use_clean_loss', action='store_true', help='Whether to use clean loss')
-    parser.add_argument('-m', '--model_name', choices=['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'resnet34', 'preact_resnet18', 'resnet50'] ,default='resnet50')
+    parser.add_argument('-m', '--model_name', help=' model_name could be one of the following:\nWideResNet28_10, WideResNet34_10, WideResNet34_20, resnet18, resnet34, preact_resnet18, resnet50\n' \
+    '                           Or of the following `robust_bench:<name>`' ,default='resnet50')
     parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='SGD')
     parser.add_argument('--scheduler', type=str, choices=['MultiStepLR', 'WarmupCosineLR', 'CyclicLR', 'CosineAnnealingWarmRestarts'],
                         help='The scheduler type for the learning rate.', default='WarmupCosineLR')
@@ -54,5 +55,13 @@ def get_args(description=""):
     parser.add_argument('--atas_c', default=0.1, type=float, help='constant for ATAS')
     parser.add_argument('--atas_max_step_size', default=8/255, type=float, help='maximum perturb step size')
     parser.add_argument('--atas_min_step_size', default=4/255, type=float, help='minimum perturb step size')
+    # AutoAttack inference args
+    parser.add_argument('--AutoAttackInference', action='store_true', help='Whether to evaluate the model using AutoAttack.')
+    parser.add_argument('--aa_attacks_list', nargs="+", type=str, default=None,
+                        help='List of AutoAttack attacks to be used. Defaults to apgd-ce.\n\
+                            Full list of avilable attacks can be found in the AutoAttack repository:\n\
+                            https://github.com/fra31/auto-attack/tree/master')
+    parser.add_argument('--checkpoint_author', type=str, default=None,
+                        help='The authors of the checkpoint model. Used for naming the saved model and later for comparison.')
     args = parser.parse_args()
     return args

@@ -9,7 +9,7 @@ from utils.models.preact_resnet import PreActResNet18
 import torch
 import torchvision
 from utils.data import load_dataloaders, get_stratified_subset_dataloader
-from adv_train import adv_training, adv_eval
+from adv_train import adv_training, adv_eval, evaluate_model_autoattack
 from torch.amp import GradScaler
 
 import pandas as pd
@@ -22,6 +22,8 @@ import wandb
 from datetime import datetime
 import pytz
 
+from robustbench.utils import load_model
+
 Models = ['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'preact_resnet18', 'resnet50']
 Datasets = ['cifar100', 'cifar10', 'flowers102', 'mnist', 'imagenet100', 'imagenet']
 
@@ -32,6 +34,9 @@ def Inference_Args(args):
     eval_uncertainty_flag = args.eval_uncertainty
     device = args.device
     pgd_step_size_factor = args.pgd_step_size_factor
+    aa_attacks_list = args.aa_attacks_list
+    AutoAttackInference = args.AutoAttackInference
+    checkpoint_author = args.checkpoint_author
     try:
         with open(f'{eval_model_path_dir}/args.json', 'r') as f:
             loaded_args = json.load(f)
@@ -49,7 +54,7 @@ def Inference_Args(args):
             dataset_name = 'cifar10'
         else:
             dataset_name = dataset_name[0]
-        # Extract the pgs num steps
+        # Extract the pgd num steps
         pgd_steps_dir = [dir for dir in file_dirs if 'pgd_steps_' in dir]
         if len(pgd_steps_dir) == 0:
             pgd_steps = 10
@@ -104,6 +109,9 @@ def Inference_Args(args):
     args.eval_epsilon_max = 32
     args.device = device
     args.pgd_step_size_factor = pgd_step_size_factor
+    args.aa_attacks_list = aa_attacks_list
+    args.AutoAttackInference = AutoAttackInference
+    args.checkpoint_author = checkpoint_author
     return args
         
 
@@ -113,7 +121,10 @@ if __name__ == '__main__':
 
     args = get_args(description='Adversarial training')
     # args.Train = True
-    # args.fine_tune = 'clean'
+    args.AutoAttackInference = True
+    args.dataset = 'imagenet'
+    args.eval_model_path = 'perceptual-advex/imagenet100/pat_self_0.25.pt'
+    # args.model_name = 'robust_bench:Salman2020Do_R50'
     # args.GradAlign = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
@@ -123,10 +134,6 @@ if __name__ == '__main__':
         args.pgd_step_size_factor = 0.5
     else:
         args.pgd_step_size_factor = 0.2
-    
-    # Adjust learning rate in ase of fine-tuning
-    # if args.fine_tune:
-    #     args.learning_rate /= 10
         
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -140,24 +147,25 @@ if __name__ == '__main__':
     
     train_loader, validation_loader, test_loader = load_dataloaders(args)
     args.num_classes=10 # Cifar10
-    if args.dataset in ['cifar100', 'imagenet100']:
-        args.num_classes = 100
-    elif args.dataset == 'imagenet':
-        args.num_classes = 1000
-    if 'wide' in args.model_name.lower():
-        model = getattr(wide_resnet, args.model_name)(num_classes=args.num_classes)
-    elif 'preact' in args.model_name.lower():
-        args.atas_c = 0.01
-        model = PreActResNet18(num_classes=args.num_classes)
-    else:
-        weights = None
-        if args.fine_tune == 'clean':
-            weights = "IMAGENET1K_V2"
-        elif args.fine_tune == 'adversarial':
-            raise NotImplementedError("Fine-tuning adversarial models is not supported yet.")
-        model = torchvision.models.get_model(args.model_name, weights=weights)
-    if args.fine_tune and args.model_name.startswith('resnet'):
-        model.fc = torch.nn.Linear(model.fc.in_features, args.num_classes)
+    if not args.model_name.startswith('robust_bench'):
+        if args.dataset in ['cifar100', 'imagenet100']:
+            args.num_classes = 100
+        elif args.dataset == 'imagenet':
+            args.num_classes = 1000
+        if 'wide' in args.model_name.lower():
+            model = getattr(wide_resnet, args.model_name)(num_classes=args.num_classes)
+        elif 'preact' in args.model_name.lower():
+            args.atas_c = 0.01
+            model = PreActResNet18(num_classes=args.num_classes)
+        else:
+            weights = None
+            if args.fine_tune == 'clean':
+                weights = "IMAGENET1K_V2"
+            elif args.fine_tune == 'adversarial':
+                raise NotImplementedError("Fine-tuning adversarial models is not supported yet.")
+            model = torchvision.models.get_model(args.model_name, weights=weights)
+        if args.dataset == 'imagenet100' and args.model_name.startswith('resnet'):
+            model.fc = torch.nn.Linear(model.fc.in_features, args.num_classes)
     
     timezone = pytz.timezone('Asia/Jerusalem')
     # args.Train = True
@@ -214,6 +222,49 @@ if __name__ == '__main__':
         # Actual training
         adv_training(model, train_loader, validation_loader, test_loader, args)
     
+    if args.AutoAttackInference:
+        if args.Train:
+            args.eval_model_path = f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth"
+        else:
+            # args.log_name = f'{args.model_name}_train method_{args.train_method}_agnostic_loss_{args.agnostic_loss}_seed_{args.seed}_max epsilon_{int(args.max_epsilon*255)}'
+            # args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
+            if not args.model_name.startswith('robust_bench') and not 'perceptual-advex' in args.eval_model_path:
+                args = Inference_Args(args)
+            else:
+                args.log_name = f"{args.model_name}"
+            # Init wandb
+            run = wandb.init(project="Adversarial-adaptive-project", name=f"AA_Inference_{args.log_name}", entity = "ido-shani-proj", config=args)
+        if args.model_name.startswith('robust_bench'):
+            model_author = args.model_name.split(':')[1]
+            model = load_model(model_name=model_author, dataset=args.dataset, threat_model='Linf')
+            model = model.model
+        elif os.path.isfile(args.eval_model_path):
+            model.load_state_dict(torch.load(args.eval_model_path))
+        else:
+            raise FileNotFoundError(f"Model file not found: {args.eval_model_path}")
+        # model.load_state_dict(torch.load(args.eval_model_path))
+        print("Model loaded")
+        # model.forward = torch.compile(model.forward)
+        # print(f"path: {args.eval_model_path}")
+        if hasattr(args, 'save_dir') and args.save_dir:
+            save_dir = args.save_dir
+        elif not args.model_name.startswith('robust_bench'):
+            args.save_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
+        else:
+            args.save_dir = f'models/{args.dataset}/Linf/{args.model_name}'
+        # check if the save_dir exists
+        if not os.path.exists(args.save_dir):
+            print(f"Directory {args.save_dir} does not exist. Creating it now.")
+            os.makedirs(args.save_dir)
+        
+        # Call evaluate_model_autoattack
+        results = evaluate_model_autoattack(model=model, dataloader=test_loader, max_eps=32, csv_filename=f'{args.save_dir}/autoattack_results.csv',
+                                            attacks_names_list=args.aa_attacks_list, device=args.device)
+                                            # attacks_names_list=None, device=args.device)
+        run.finish()
+        exit
+
+
     if args.Inference:
         if args.Train:
             args.eval_model_path = f"{args.save_dir}/max_epsilon_{int(args.max_epsilon*255)}.pth"
