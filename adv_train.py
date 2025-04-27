@@ -154,15 +154,15 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
     # if args.ATAS:
     gdnorm_list = torch.zeros(len(train_loader.dataset), device=args.device)
     # Initialize augmentation transformation for clean samples:
-    clean_transform = v2.Compose([
-        v2.RandomHorizontalFlip(),
-        v2.RandomRotation(15),
-    ])
+    # clean_transform = v2.Compose([
+    #     # v2.RandomHorizontalFlip(),
+    #     v2.RandomRotation(15),
+    # ])
     if 'wide' in args.model_name.lower() or 'preact' in args.model_name.lower():
         image_size = 32
     else:
         image_size = 224    
-    clean_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
+    # clean_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
     val_best_accuracy = 0
     for epoch in range(args.max_epochs):
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
@@ -243,7 +243,8 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 y_score = model(x_pert)
                 loss_pert = F.cross_entropy(y_score, y)
-            x_augmented = clean_transform(x) if args.augment else x
+            # x_augmented = clean_transform(x) if args.augment else x
+            x_augmented = x
             if args.GradAlign:
                 x_augmented.requires_grad = True
             with torch.autocast(device_type='cuda', dtype=torch.float16):
@@ -456,7 +457,7 @@ def evaluate_model_autoattack(model, dataloader, max_eps:int, csv_filename:str, 
     print(f"Clean Accuracy: {clean_acc * 100:.2f}%")
 
     # List of attacks to evaluate
-    attacks = ["apgd-ce", "apgd-dlr"] if attacks_names_list is None else attacks_names_list
+    attacks = ["apgd-ce"] if attacks_names_list is None else attacks_names_list
 
     # log clean accuracy
     for attack in attacks:
@@ -503,8 +504,9 @@ def evaluate_model_autoattack(model, dataloader, max_eps:int, csv_filename:str, 
                 # Note: run_standard_evaluation returns adversarial examples only for images that were
                 # initially correctly classified.
                 # print(f"Before running batch {batch_idx}")
-                _, non_robust_total_num = adversary.run_standard_evaluation(images, labels, bs=images.shape[0])
-                # print(f"After running batch {batch_idx}")
+                x_adv , non_robust_total_num = adversary.run_standard_evaluation(images, labels, bs=images.shape[0])
+                delta = (x_adv - images).abs().view(images.size(0), -1).max(1)[0]
+                print("max pixel delta:", delta)
                 # with torch.no_grad():
                 #     preds = model(x_adv).argmax(dim=1)
                 robust_correct_attack += images.shape[0] - non_robust_total_num
