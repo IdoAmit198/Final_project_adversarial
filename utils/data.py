@@ -143,34 +143,36 @@ def load_dataloaders(args, seed:int = 42):
         train_transform = v2.Compose([
             v2.Resize(int(image_size * 1.143)),
             v2.CenterCrop(image_size),
+            v2.RandomHorizontalFlip(),
             v2.ToTensor(),
-            v2.Normalize(mean=transform_mean, std=transform_std),
+            # v2.Normalize(mean=transform_mean, std=transform_std),
         ])
 
         test_transform = v2.Compose([
             v2.Resize(int(image_size * 1.143)),
             v2.CenterCrop(image_size),
             v2.ToTensor(),
-            v2.Normalize(mean=transform_mean, std=transform_std),
+            # v2.Normalize(mean=transform_mean, std=transform_std),
         ])
         if 'Wong' in args.model_name:
             test_transform = v2.Compose([
                 v2.CenterCrop(288),
                 v2.ToTensor(),
-                v2.Normalize(mean=transform_mean, std=transform_std),
+                # v2.Normalize(mean=transform_mean, std=transform_std),
         ])
     if 'cifar10' == args.dataset:
         transform_mean, transform_std = [0.4914, 0.4822, 0.4465], [0.2471, 0.2435, 0.2616]
         train_transform = v2.Compose([
             v2.Resize((image_size, image_size)),
+            v2.RandomHorizontalFlip(),
             v2.ToTensor(),
-            v2.Normalize(mean=transform_mean, std=transform_std),
+            # v2.Normalize(mean=transform_mean, std=transform_std),
         ])
 
         test_transform = v2.Compose([
             v2.Resize((image_size, image_size)),
             v2.ToTensor(),
-            v2.Normalize(mean=transform_mean, std=transform_std),
+            # v2.Normalize(mean=transform_mean, std=transform_std),
         ])
 
     if 'imagenet' in args.dataset:

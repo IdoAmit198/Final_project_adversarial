@@ -44,13 +44,13 @@ def get_args(description=""):
     parser.add_argument('--eval_uncertainty', action='store_true',
                         help='Whether to evaluate the uncertainty estimation abilities of the trained model. Defauled to True.\n \
                         Uncertainty estimation will be assessed only using the test set.')
-    # ATAS args
-    parser.add_argument('--ATAS', action='store_true', help='Whether to use ATAS or not.')
     # parser.add_argument('--ATAS', action='store_false', help='Whether to use ATAS or not.')
     # GradAlign args
     parser.add_argument('--GradAlign', action='store_true', help='Whether to use GradAlign or not.')
     parser.add_argument('--grad_align_lambda', default=2.0, type=float, help='regularization hyper-parameter for GradAlign')
     #
+    # ATAS args
+    parser.add_argument('--ATAS', action='store_true', help='Whether to use ATAS or not.')
     parser.add_argument('--atas_beta', default=0.5, type=float, help='hardness momentum')
     parser.add_argument('--atas_c', default=0.1, type=float, help='constant for ATAS')
     parser.add_argument('--atas_max_step_size', default=8/255, type=float, help='maximum perturb step size')

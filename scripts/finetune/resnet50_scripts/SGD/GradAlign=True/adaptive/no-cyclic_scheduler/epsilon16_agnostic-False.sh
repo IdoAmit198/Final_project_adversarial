@@ -5,5 +5,5 @@ conda activate cs236207
 
 # This script requires the sbatch to run with at least 16 CPUs!
 srun -c 16 --gres=gpu:1 python3 run.py --train_method adaptive --model_name resnet50 \
-    --dataset imagenet100 --Train --Inference --fine_tune clean --max_epochs 30 \
-    --GradAlign --learning_rate 1e-3 --scheduler WarmupCosineLR
+    --dataset imagenet100 --Train --fine_tune clean --max_epochs 150 \
+    --GradAlign --learning_rate 1e-3

@@ -27,6 +27,20 @@ from robustbench.utils import load_model
 Models = ['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'preact_resnet18', 'resnet50']
 Datasets = ['cifar100', 'cifar10', 'flowers102', 'mnist', 'imagenet100', 'imagenet']
 
+
+class NormalizeModelWrapper(torch.nn.Module):
+    def __init__(self, base_model, mean, std):
+        super().__init__()
+        self.model = base_model
+        # Store mean/std as [1×3×1×1] buffers
+        self.register_buffer('mean', torch.tensor(mean).view(1,3,1,1))
+        self.register_buffer('std',  torch.tensor(std).view(1,3,1,1))
+
+    def forward(self, x: torch.Tensor):
+        # x is in [0,1] here
+        x = (x - self.mean) / self.std
+        return self.model(x)
+
 def Inference_Args(args):
     # Attempt to load the json in the args.eval_model_path
     eval_model_path = args.eval_model_path
@@ -121,10 +135,11 @@ if __name__ == '__main__':
 
     args = get_args(description='Adversarial training')
     # args.Train = True
-    args.AutoAttackInference = True
-    args.dataset = 'imagenet'
-    args.eval_model_path = 'perceptual-advex/imagenet100/pat_self_0.25.pt'
+    # args.AutoAttackInference = True
+    # args.dataset = 'imagenet100'
+    # args.eval_model_path = 'perceptual-advex/imagenet100/pat_self_0.25.pt'
     # args.model_name = 'robust_bench:Salman2020Do_R50'
+    # args.eval_model_path = 'saved_models/imagenet100/fine_tune_clean/resnet50/seed_42/train_method_adaptive/agnostic_loss_False/GradAlign_True/optimizer_SGD/pgd_steps_2/schdeuler_CosineAnnealingWarmRestarts/lr_0.001/epsilon_16/max_epsilon_16.pth'
     # args.GradAlign = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
@@ -166,7 +181,10 @@ if __name__ == '__main__':
             model = torchvision.models.get_model(args.model_name, weights=weights)
         if args.dataset == 'imagenet100' and args.model_name.startswith('resnet'):
             model.fc = torch.nn.Linear(model.fc.in_features, args.num_classes)
-    
+    mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+    wrapped_model = NormalizeModelWrapper(model, mean, std)
+    model = wrapped_model
+
     timezone = pytz.timezone('Asia/Jerusalem')
     # args.Train = True
     if args.Train:
@@ -237,9 +255,16 @@ if __name__ == '__main__':
         if args.model_name.startswith('robust_bench'):
             model_author = args.model_name.split(':')[1]
             model = load_model(model_name=model_author, dataset=args.dataset, threat_model='Linf')
-            model = model.model
+            # model = model.model
         elif os.path.isfile(args.eval_model_path):
             model.load_state_dict(torch.load(args.eval_model_path))
+            # if args.dataset.startswith('imagenet'):
+            #     wrapped_model = NormalizeModelWrapper(model, mean, std)
+            #     wrapped_model.to(args.device).eval()
+            #     model = wrapped_model
+            #     print(f"Wrapped model with normalization")
+            # else:
+            #     raise NotImplementedError("Normalization wrapper is not implemented for this dataset")
         else:
             raise FileNotFoundError(f"Model file not found: {args.eval_model_path}")
         # model.load_state_dict(torch.load(args.eval_model_path))
