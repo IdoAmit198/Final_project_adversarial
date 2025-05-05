@@ -4,6 +4,8 @@ from sklearn.model_selection import train_test_split
 from torchvision import datasets
 from torchvision.transforms import v2
 from torchvision.datasets import VisionDataset
+from torchvision import transforms
+
 import time
 
 import torch
@@ -83,6 +85,8 @@ from functools import wraps
 from torchvision.datasets import ImageFolder
 import os
 
+import timm
+
 def file_cache(filename):
     """Decorator to cache the output of a function to disk."""
     def decorator(f):
@@ -127,7 +131,7 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-def load_dataloaders(args, seed:int = 42):
+def load_dataloaders(args, timm_model, seed:int = 42):
     start_time = time.time()
     batch_size = args.batch_size
     g = torch.Generator().manual_seed(seed)
@@ -138,7 +142,18 @@ def load_dataloaders(args, seed:int = 42):
     else:
         image_size = 224    
 
-    if 'imagenet' in args.dataset:
+    if args.timm_model_name:
+        data_config = timm.data.resolve_model_data_config(timm_model)
+        train_transform = timm.data.create_transform(**data_config, is_training=True)
+        test_transform = timm.data.create_transform(**data_config, is_training=False)
+        # Removing layers dependent on range of values
+        fixed_train_transform = [t for t in train_transform.transforms if not isinstance(t, transforms.Normalize) and not isinstance(t, transforms.ColorJitter)]
+        fixed_test_transform = [t for t in train_transform.transforms if not isinstance(t, transforms.Normalize)]
+        # Re-compose
+        train_transform = transforms.Compose(fixed_train_transform)
+        test_transform = transforms.Compose(fixed_test_transform)
+
+    elif 'imagenet' in args.dataset:
         transform_mean, transform_std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
         train_transform = v2.Compose([
             v2.Resize(int(image_size * 1.143)),
@@ -160,7 +175,7 @@ def load_dataloaders(args, seed:int = 42):
                 v2.ToTensor(),
                 # v2.Normalize(mean=transform_mean, std=transform_std),
         ])
-    if 'cifar10' == args.dataset:
+    elif 'cifar10' == args.dataset:
         transform_mean, transform_std = [0.4914, 0.4822, 0.4465], [0.2471, 0.2435, 0.2616]
         train_transform = v2.Compose([
             v2.Resize((image_size, image_size)),

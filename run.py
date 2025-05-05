@@ -22,6 +22,7 @@ import wandb
 from datetime import datetime
 import pytz
 
+import timm
 from robustbench.utils import load_model
 
 Models = ['WideResNet28_10', 'WideResNet34_10', 'WideResNet34_20', 'resnet18', 'preact_resnet18', 'resnet50']
@@ -159,8 +160,10 @@ if __name__ == '__main__':
     print(f"Device: {args.device}")
     args.cpu_num = len(os.sched_getaffinity(0))
     print(f"args:\n{args}")
-    
-    train_loader, validation_loader, test_loader = load_dataloaders(args)
+
+    # Check wehther the model is from timm library
+    args.timm_model_name = args.model_name.split('timm_')[1] if args.model_name.startswith('timm_') else None
+
     args.num_classes=10 # Cifar10
     if not args.model_name.startswith('robust_bench'):
         if args.dataset in ['cifar100', 'imagenet100']:
@@ -172,6 +175,9 @@ if __name__ == '__main__':
         elif 'preact' in args.model_name.lower():
             args.atas_c = 0.01
             model = PreActResNet18(num_classes=args.num_classes)
+        elif args.model_name.startswith('timm_'):
+            args.model_name = args.model_name.split('timm_')[1]
+            model = timm.create_model('resnetv2_50x1_bit.goog_in21k_ft_in1k', pretrained=True)
         else:
             weights = None
             if args.fine_tune == 'clean':
@@ -181,9 +187,25 @@ if __name__ == '__main__':
             model = torchvision.models.get_model(args.model_name, weights=weights)
         if args.dataset == 'imagenet100' and args.model_name.startswith('resnet'):
             model.fc = torch.nn.Linear(model.fc.in_features, args.num_classes)
+    
+    timm_model = model if args.timm_model_name else None
+    train_loader, validation_loader, test_loader = load_dataloaders(args, timm_model)
+    
     mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+    if args.timm_model_name:
+        mean, std = [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]
     wrapped_model = NormalizeModelWrapper(model, mean, std)
     model = wrapped_model
+
+
+    # Pick minimal clean accuracy threshold
+    args.dataset_clean_min_threshold = 100 / args.num_classes
+    if args.dataset == 'imagenet':
+        args.dataset_clean_min_threshold = 0.60
+    elif args.dataset == 'imagenet100':
+        args.dataset_clean_min_threshold = 0.70
+    elif args.dataset == 'cifar10':
+        args.dataset_clean_min_threshold = 0.70
 
     timezone = pytz.timezone('Asia/Jerusalem')
     # args.Train = True
@@ -223,7 +245,7 @@ if __name__ == '__main__':
         # wandb.define_metric("train_lr", step_metric="step")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
-        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/GradAlign_{args.GradAlign}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}/schdeuler_{args.scheduler}/lr_{args.learning_rate}"
+        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/GradAlign_{args.GradAlign}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}/schdeuler_{args.scheduler}/lr_{args.learning_rate}/epochs_{args.max_epochs}"
         if os.path.exists(save_dir) and args.sanity_check:
             print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
             additional_folder = 'sanity_check_2-new/'

@@ -352,8 +352,9 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         # validation_epsilons_weights = [0.1, 0.04305, 0.01853, 0.00343]
         # normalized_validation_epsilons_weight = [weight/sum(validation_epsilons_weights) for weight in validation_epsilons_weights]
         # validation_accuracy = sum([normalized_weight * epsilon_accuracy for normalized_weight, epsilon_accuracy in zip(normalized_validation_epsilons_weight, validation_accuracy_list)])
-        validation_accuracy = sum(validation_accuracy_list)/len(validation_accuracy_list)
-        if validation_accuracy > val_best_accuracy:
+        clean_val_acc = validation_accuracy_list[0]
+        validation_accuracy = sum(validation_accuracy_list[1:])/len(validation_accuracy_list[1:])
+        if validation_accuracy > val_best_accuracy and clean_val_acc > args.dataset_clean_min_threshold:
             val_best_accuracy = validation_accuracy
             print(f"New best model found with validation accuracy of {val_best_accuracy*100}%!")
             print("Saving model...")
@@ -504,9 +505,9 @@ def evaluate_model_autoattack(model, dataloader, max_eps:int, csv_filename:str, 
                 # Note: run_standard_evaluation returns adversarial examples only for images that were
                 # initially correctly classified.
                 # print(f"Before running batch {batch_idx}")
-                x_adv , non_robust_total_num = adversary.run_standard_evaluation(images, labels, bs=images.shape[0])
-                delta = (x_adv - images).abs().view(images.size(0), -1).max(1)[0]
-                print("max pixel delta:", delta)
+                _ , non_robust_total_num = adversary.run_standard_evaluation(images, labels, bs=images.shape[0])
+                # delta = (x_adv - images).abs().view(images.size(0), -1).max(1)[0]
+                # print("max pixel delta:", delta)
                 # with torch.no_grad():
                 #     preds = model(x_adv).argmax(dim=1)
                 robust_correct_attack += images.shape[0] - non_robust_total_num

@@ -16,7 +16,7 @@ def get_args(description=""):
     parser.add_argument('--augment', action='store_true', help='Whether to augment the training data')
     parser.add_argument('--use_clean_loss', action='store_true', help='Whether to use clean loss')
     parser.add_argument('-m', '--model_name', help=' model_name could be one of the following:\nWideResNet28_10, WideResNet34_10, WideResNet34_20, resnet18, resnet34, preact_resnet18, resnet50\n' \
-    '                           Or of the following `robust_bench:<name>`' ,default='resnet50')
+    '                           Or of the following `robust_bench:<name>` / timm_<name>' ,default='resnet50')
     parser.add_argument('-opt', '--optimizer', choices=['SGD', 'ADAM'], help='Choose an optimizer', default='SGD')
     parser.add_argument('--scheduler', type=str, choices=['MultiStepLR', 'WarmupCosineLR', 'CyclicLR', 'CosineAnnealingWarmRestarts'],
                         help='The scheduler type for the learning rate.', default='WarmupCosineLR')
