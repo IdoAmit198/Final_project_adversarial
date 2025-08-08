@@ -60,10 +60,10 @@ class Cutout(object):
         return img
 
 class DatasetWithMeta(torch.utils.data.Dataset):
-    def __init__(self, dataset):
+    def __init__(self, dataset, epsilons_initial:int = 0):
         super().__init__()
         self.dataset = dataset
-        self.epsilons = torch.zeros(len(dataset), dtype=torch.float32)
+        self.epsilons = torch.zeros(len(dataset), dtype=torch.float32) + epsilons_initial
 
     def __getitem__(self, index):
         x,y = self.dataset.__getitem__(index)
@@ -198,7 +198,7 @@ def load_dataloaders(args, timm_model, seed:int = 42):
         test_dataset = CachedImageFolder(root='/datasets/ImageNet/val', transform=test_transform)
         if 'imagenet100' == args.dataset:
             # Identify classes to keep: labels divisible by 10
-            filtered_classes = [class_name for idx, class_name in enumerate(train_dataset.classes) if idx % 10 == 0]
+            filtered_classes = [class_name for idx, class_name in enumerate(train_dataset.classes) if idx % 10 == args.imagenet100_class_index]
             filtered_class_indices = sorted({train_dataset.class_to_idx[class_name] for class_name in filtered_classes})
             label_mapping = {old_label: new_label for new_label, old_label in enumerate(filtered_class_indices)}
 
@@ -266,9 +266,9 @@ def load_dataloaders(args, timm_model, seed:int = 42):
     #         assert class_mapping[class_name] == label, f"Class name {class_name} does not map to label {label} as expected in validation_ds."
     ### End Debugging ###
     
-    train_ds = DatasetWithMeta(train_ds)
-    validation_ds = DatasetWithMeta(validation_ds)
-    test_ds = DatasetWithMeta(test_dataset)
+    train_ds = DatasetWithMeta(train_ds, args.epsilons_initial)
+    validation_ds = DatasetWithMeta(validation_ds, args.epsilons_initial)
+    test_ds = DatasetWithMeta(test_dataset, args.epsilons_initial)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=args.cpu_num, pin_memory=True,
                               worker_init_fn=seed_worker, generator=g, drop_last=True)
     validation_loader = DataLoader(validation_ds, batch_size=int(batch_size), shuffle=False, num_workers=args.cpu_num, pin_memory=True, drop_last=True)

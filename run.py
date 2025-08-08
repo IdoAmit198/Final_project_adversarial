@@ -9,7 +9,7 @@ from utils.models.preact_resnet import PreActResNet18
 import torch
 import torchvision
 from utils.data import load_dataloaders, get_stratified_subset_dataloader
-from adv_train import adv_training, adv_eval, evaluate_model_autoattack
+from adv_train import adv_training, adv_eval, evaluate_model_autoattack, perturbations_similarity
 from torch.amp import GradScaler
 
 import pandas as pd
@@ -96,7 +96,9 @@ def Inference_Args(args):
         target_agnostic_dir = [dir for dir in file_dirs if 'agnostic_loss_' in dir][0]
         whether_agnostic = 'True' if 'True' in target_agnostic_dir else 'False'
         train_method = None
-        if 'adaptive' in args.eval_model_path:
+        if 'adaptive_punish' in args.eval_model_path:
+            train_method = 'adaptive_punish'
+        elif 'adaptive' in args.eval_model_path:
             train_method = 'adaptive'
         elif 're_introduce' in args.eval_model_path:
             train_method = 're_introduce'
@@ -136,11 +138,14 @@ if __name__ == '__main__':
 
     args = get_args(description='Adversarial training')
     # args.Train = True
+    # args.epsilons_initial = 6/255
     # args.AutoAttackInference = True
     # args.dataset = 'imagenet100'
     # args.eval_model_path = 'perceptual-advex/imagenet100/pat_self_0.25.pt'
     # args.model_name = 'robust_bench:Salman2020Do_R50'
-    # args.eval_model_path = 'saved_models/imagenet100/fine_tune_clean/resnet50/seed_42/train_method_adaptive/agnostic_loss_False/GradAlign_True/optimizer_SGD/pgd_steps_2/schdeuler_CosineAnnealingWarmRestarts/lr_0.001/epsilon_16/max_epsilon_16.pth'
+    # args.perturbations_similarity_compute = True
+    # args.fine_tune = 'adversarial' 
+    # args.eval_model_path = 'saved_models/imagenet/fine_tune_adversarial/robust_bench:Salman2020Do_R50/seed_42/train_method_adaptive/agnostic_loss_False/GradAlign_False/optimizer_SGD/pgd_steps_2/schdeuler_CosineAnnealingWarmRestarts/lr_0.0005/epochs_20/init_epsilon_0.050980392156862744/max_epsilon_16.pth'
     # args.GradAlign = True
     # adjust pgd_steps_size according to a paper:
     # GradAlign https://arxiv.org/pdf/2007.02617
@@ -156,6 +161,7 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
 
     args.max_epsilon = args.max_epsilon/255
+    args.epsilons_initial = args.epsilons_initial/255
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Device: {args.device}")
     args.cpu_num = len(os.sched_getaffinity(0))
@@ -165,11 +171,12 @@ if __name__ == '__main__':
     args.timm_model_name = args.model_name.split('timm_')[1] if args.model_name.startswith('timm_') else None
 
     args.num_classes=10 # Cifar10
+    if args.dataset in ['cifar100', 'imagenet100']:
+        args.num_classes = 100
+    elif args.dataset == 'imagenet':
+        args.num_classes = 1000
+
     if not args.model_name.startswith('robust_bench'):
-        if args.dataset in ['cifar100', 'imagenet100']:
-            args.num_classes = 100
-        elif args.dataset == 'imagenet':
-            args.num_classes = 1000
         if 'wide' in args.model_name.lower():
             model = getattr(wide_resnet, args.model_name)(num_classes=args.num_classes)
         elif 'preact' in args.model_name.lower():
@@ -187,17 +194,36 @@ if __name__ == '__main__':
             model = torchvision.models.get_model(args.model_name, weights=weights)
         if args.dataset == 'imagenet100' and args.model_name.startswith('resnet'):
             model.fc = torch.nn.Linear(model.fc.in_features, args.num_classes)
+
+        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        if args.timm_model_name:
+            mean, std = [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]
+        wrapped_model = NormalizeModelWrapper(model, mean, std)
+        model = wrapped_model
     
+    elif args.model_name.startswith('robust_bench') and args.fine_tune == 'adversarial':
+        # Load the model from robustbench
+        model_author = args.model_name.split(':')[1]
+        robust_bench_dataset = args.dataset if args.dataset != 'imagenet100' else 'imagenet'
+        model = load_model(model_name=model_author, dataset=robust_bench_dataset, threat_model='Linf')
+        # model = model.model
+        if args.dataset in ['cifar100', 'imagenet100']:
+            args.num_classes = 100
+            # Might not work, maybe I need to access some object inside the model.
+            model.model.fc = torch.nn.Linear(model.model.fc.in_features, args.num_classes)
+    
+    # elif args.model_name.startswith('robust_bench') and args.AutoAttackInference:
+    #     # Load the model from robustbench
+    #     model_author = args.model_name.split(':')[1]
+    #     model = load_model(model_name=model_author, dataset=args.dataset, threat_model='Linf')
+        
     timm_model = model if args.timm_model_name else None
     train_loader, validation_loader, test_loader = load_dataloaders(args, timm_model)
-    
-    mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-    if args.timm_model_name:
-        mean, std = [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]
-    wrapped_model = NormalizeModelWrapper(model, mean, std)
-    model = wrapped_model
-
-
+    if args.perturbations_similarity_compute:
+        # sample stratified subset of 10% sample from the test_loader
+        num_samples = int(len(test_loader.dataset) * 0.1)
+        test_loader = get_stratified_subset_dataloader(test_loader, num_samples)
+        
     # Pick minimal clean accuracy threshold
     args.dataset_clean_min_threshold = 100 / args.num_classes
     if args.dataset == 'imagenet':
@@ -245,7 +271,9 @@ if __name__ == '__main__':
         # wandb.define_metric("train_lr", step_metric="step")
         # Define the save_dir and save the args in that dir as a json file.
         additional_folder = 'sanity_check/' if args.sanity_check else ''
-        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/GradAlign_{args.GradAlign}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}/schdeuler_{args.scheduler}/lr_{args.learning_rate}/epochs_{args.max_epochs}"
+        save_dir = f"saved_models/{args.dataset}/fine_tune_{args.fine_tune}/{args.model_name}/{additional_folder}seed_{args.seed}/train_method_{args.train_method}/agnostic_loss_{args.agnostic_loss}/GradAlign_{args.GradAlign}/optimizer_{args.optimizer}/pgd_steps_{args.pgd_num_steps}/schdeuler_{args.scheduler}/lr_{args.learning_rate}/epochs_{args.max_epochs}/init_epsilon_{args.epsilons_initial}"
+        if args.train_method == 'sparse_pgd':
+            save_dir += f"/sparse_epsilons_{args.sparse_attacks_epsilons}"
         if os.path.exists(save_dir) and args.sanity_check:
             print(f"Sanity check model already exists in {save_dir}. Will train another one and save it in a different folder.")
             additional_folder = 'sanity_check_2-new/'
@@ -258,9 +286,28 @@ if __name__ == '__main__':
             json.dump(args.__dict__, f, indent=2)
         print(f"args saved in {save_dir}/args.json")
         # Initialize scaler for amp
-        args.scaler = GradScaler()
+        # args.scaler = GradScaler()
         # Actual training
         adv_training(model, train_loader, validation_loader, test_loader, args)
+    
+    if args.perturbations_similarity_compute:
+        if args.model_name.startswith('robust_bench'):
+            model_author = args.model_name.split(':')[1]
+            robust_bench_dataset = args.dataset if args.dataset != 'imagenet100' else 'imagenet'
+            model = load_model(model_name=model_author, dataset=robust_bench_dataset, threat_model='Linf')
+            if args.num_classes != 1000:
+                model.model.fc = torch.nn.Linear(model.model.fc.in_features, args.num_classes)
+        if args.eval_model_path:
+            if os.path.isfile(args.eval_model_path):
+                model.load_state_dict(torch.load(args.eval_model_path))
+            else:
+                raise FileNotFoundError(f"Model file not found: {args.eval_model_path}")
+        print("Model loaded")
+        # call the perturbations similarity compute function
+        evaluated_epsilons = list(range(17))
+        perturbations_similarity(model, test_loader, args, evaluated_epsilons)
+        exit(0)
+
     
     if args.AutoAttackInference:
         if args.Train:
@@ -268,34 +315,34 @@ if __name__ == '__main__':
         else:
             # args.log_name = f'{args.model_name}_train method_{args.train_method}_agnostic_loss_{args.agnostic_loss}_seed_{args.seed}_max epsilon_{int(args.max_epsilon*255)}'
             # args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
-            if not args.model_name.startswith('robust_bench') and not 'perceptual-advex' in args.eval_model_path:
+            if not args.model_name.startswith('robust_bench') and not 'perceptual-advex' in args.eval_model_path \
+                and not args.eval_model_path:
                 args = Inference_Args(args)
             else:
                 args.log_name = f"{args.model_name}"
+                if 'robust_bench' in args.model_name and args.eval_model_path:
+                    initial_eps = float((args.eval_model_path.split('/')[-2]).split('_')[-1]) * 255
+                    args.log_name += f"_{initial_eps}FT"
             # Init wandb
             run = wandb.init(project="Adversarial-adaptive-project", name=f"AA_Inference_{args.log_name}", entity = "ido-shani-proj", config=args)
         if args.model_name.startswith('robust_bench'):
             model_author = args.model_name.split(':')[1]
-            model = load_model(model_name=model_author, dataset=args.dataset, threat_model='Linf')
+            robust_bench_dataset = args.dataset if args.dataset != 'imagenet100' else 'imagenet'
+            model = load_model(model_name=model_author, dataset=robust_bench_dataset, threat_model='Linf')
+            if args.num_classes != 1000:
+                model.model.fc = torch.nn.Linear(model.model.fc.in_features, args.num_classes)
             # model = model.model
-        elif os.path.isfile(args.eval_model_path):
+        if args.eval_model_path and os.path.isfile(args.eval_model_path):
             model.load_state_dict(torch.load(args.eval_model_path))
-            # if args.dataset.startswith('imagenet'):
-            #     wrapped_model = NormalizeModelWrapper(model, mean, std)
-            #     wrapped_model.to(args.device).eval()
-            #     model = wrapped_model
-            #     print(f"Wrapped model with normalization")
-            # else:
-            #     raise NotImplementedError("Normalization wrapper is not implemented for this dataset")
         else:
             raise FileNotFoundError(f"Model file not found: {args.eval_model_path}")
-        # model.load_state_dict(torch.load(args.eval_model_path))
+        
         print("Model loaded")
-        # model.forward = torch.compile(model.forward)
-        # print(f"path: {args.eval_model_path}")
+        
         if hasattr(args, 'save_dir') and args.save_dir:
             save_dir = args.save_dir
-        elif not args.model_name.startswith('robust_bench'):
+        # elif not args.model_name.startswith('robust_bench'):
+        elif args.eval_model_path:
             args.save_dir = args.eval_model_path[:args.eval_model_path.rfind('/')]
         else:
             args.save_dir = f'models/{args.dataset}/Linf/{args.model_name}'
@@ -320,7 +367,6 @@ if __name__ == '__main__':
             # args.date_stamp = datetime.now(timezone).strftime("%d/%m_%H:%M")
             args = Inference_Args(args)
             run = wandb.init(project="Adversarial-adaptive-project", name=f"Inference_{args.log_name}", entity = "ido-shani-proj", config=args)
-            # wandb.init(project="Adversarial-adaptive-project", name=f'{args.date_stamp}_{args.log_name}', entity = "ido-shani-proj", config=args)
         wandb.define_metric("Epsilon")
         wandb.define_metric("Inference/ Test", step_metric="Epsilon")
         wandb.define_metric("Inference/ Train", step_metric="Epsilon")

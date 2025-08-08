@@ -10,9 +10,12 @@ def get_args(description=""):
     parser.add_argument('--fine_tune', type=str, default=None, choices=['clean', 'adversarial', None],
                         help='Whether to fine-tune a clean or an adversarial checkpoint model. Defaults to None, which does not fine-tune at all.')
     parser.add_argument('-s', '--seed', type=int, default=42, help='Give random seed')
+    # dataset arguments 
     parser.add_argument('-d', '--dataset',
                         choices=['cifar10', 'cifar100', 'flowers102', 'mnist', 'imagenet', 'imagenet100'],
                         help='Give the dataset name from the choices. Currently, only Cifar-10 is supported.', default='imagenet')
+    parser.add_argument('--imagenet100_class_index', type=int, default=0, help="The 100 classes taken from ImageNet are the ones that index % 10 = `imagenet100_class_index`\n. Defaults to 0.")
+    
     parser.add_argument('--augment', action='store_true', help='Whether to augment the training data')
     parser.add_argument('--use_clean_loss', action='store_true', help='Whether to use clean loss')
     parser.add_argument('-m', '--model_name', help=' model_name could be one of the following:\nWideResNet28_10, WideResNet34_10, WideResNet34_20, resnet18, resnet34, preact_resnet18, resnet50\n' \
@@ -26,6 +29,7 @@ def get_args(description=""):
     parser.add_argument('--pgd_step_size_factor', type=float, default=1.0, help='Step size factor for PGD training')
     parser.add_argument('--max_epsilon', type=int, default=16, help='Maximum epsilon value for adaptive adversarial training.\n\
                                                 Notice that the value should be in the range of 0-255, and a value of x actually is x/255.')
+    parser.add_argument('--epsilons_initial', type=int, default=0, help='Initial epsilon value for adaptive adversarial training. defaulted to 0.')
     parser.add_argument('--epsilon_step_size', type=float, default=1/255, help='Epsilon step increcement for adaptive adversarial training')
     # parser.add_argument('--re_introduce_prob', type=float, default=0.2, help='During re-introduce method, the probability to re-introduce smaller epsilon value.')
     parser.add_argument('-bs', '--batch_size', type=int, default=128,
@@ -33,8 +37,8 @@ def get_args(description=""):
     parser.add_argument('-lr', '--learning_rate', default=1e-1, type=float, help='learning rate for training')
     parser.add_argument('-wd', '--weight_decay', default=5e-4, type=float, help='weight decay for training')
     parser.add_argument("--momentum", default=0.9, type=float, help="SGD Momentum.")
-    parser.add_argument('-tm', '--train_method', choices=['train','adaptive', 're_introduce', 'eval'], help='Training method. \
-                        Will be to decide whether to measure baseline, adaptive, and such.', default='re_introduce')
+    parser.add_argument('-tm', '--train_method', choices=['train','adaptive', 'adaptive_punish', 're_introduce', 'eval', 'sparse_pgd'], \
+                        help='Training method. Will be to decide whether to measure baseline, adaptive, and such.', default='sparse_pgd')
     parser.add_argument('--agnostic_loss', action='store_true', help='Use agnostic loss')
     # Eval epsilons args
     parser.add_argument('--sanity_check', action='store_true', help='Whether we make a sanity check now. If we do, it changes the save dir.\n \
@@ -61,7 +65,11 @@ def get_args(description=""):
                         help='List of AutoAttack attacks to be used. Defaults to apgd-ce.\n\
                             Full list of avilable attacks can be found in the AutoAttack repository:\n\
                             https://github.com/fra31/auto-attack/tree/master')
+    # sparse pgd arguments
+    parser.add_argument('--sparse_attacks_epsilons', nargs="+", type=int, default=[4, 8], help='List of epsilon values for sparse PGD attacks.')
+
     parser.add_argument('--checkpoint_author', type=str, default=None,
                         help='The authors of the checkpoint model. Used for naming the saved model and later for comparison.')
+    parser.add_argument('--perturbations_similarity_compute', action='store_true', help='Whether to compute perturbations similarity.')
     args = parser.parse_args()
     return args

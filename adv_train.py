@@ -2,6 +2,7 @@ from tqdm import tqdm
 import torch
 from torch.nn import functional as F
 import wandb
+import numpy as np
 # import os
 # from torch.cuda.amp import GradScaler, autocast
 
@@ -16,6 +17,13 @@ from utils.warm_schduler import WarmupCosineLR
 
 from autoattack import AutoAttack
 import csv
+
+from sPGD import SparsePGD
+
+from utils.similarity_metrics import *
+import matplotlib.pyplot as plt
+from plot_similarity_from_csv import create_improved_plot
+
 
 def PGD(model, x, y, epsilons, pgd_num_steps, args, targeted=False, gdnorms = None):
     # If epsilons are all zeros, no need to run PGD, simply return x.
@@ -107,6 +115,135 @@ def adv_eval(model, test_loader, args, evaluated_epsilon, uncertainty_evaluation
         return test_accuracy, uncertainty_dict
     return test_accuracy, None
 
+def perturbations_similarity(model, test_loader, args, evaluated_epsilons:list[int]):
+    """
+    Calculate the similarity between the perturbations of images given different perturbation strength, epsilon.
+    Similarity will be measured by FID score, lower is more similar.
+
+    1. Iterate over the list of `evaluated_epsilons` and for each epsilon perturb the images in the test_loader.
+        Make sure to maintain only the perturbation, which is the original image subtracted from the output of the `PGD` method.
+        Store on cpu the perturbations in a list of dataloaders.
+    2. For each pair of epsilons, calculate the FID score between the computed perturbations.
+    """
+    model.eval()
+    # move model to device
+    model.to(args.device)
+    FID_matrix = np.zeros((len(evaluated_epsilons), len(evaluated_epsilons)))
+    cosine_matrix = np.zeros((len(evaluated_epsilons), len(evaluated_epsilons)))
+    MSE_matrix = np.zeros((len(evaluated_epsilons), len(evaluated_epsilons)))
+    # Normalized perturbations matrices
+    FID_matrix_normalized = np.zeros((len(evaluated_epsilons), len(evaluated_epsilons)))
+    cosine_matrix_normalized = np.zeros((len(evaluated_epsilons), len(evaluated_epsilons)))
+    MSE_matrix_normalized = np.zeros((len(evaluated_epsilons), len(evaluated_epsilons)))
+
+    perturbations_dataloaders = []
+    perturbations_normalized_dataloaders = []
+    
+    preprocess = transforms.Compose([
+        transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    for epsilon in evaluated_epsilons:
+        perturbations = []
+        perturbations_normalized = []
+        for batch in tqdm(test_loader, desc=f'Calculating perturbations for epsilon {epsilon}'):
+            if len(batch) == 4:
+                _, _, x, y = batch
+            else:
+                x, y = batch
+            x, y = x.to(args.device), y.to(args.device)
+            x_pert = PGD(model, x, y, epsilon, 100, args)
+            perturbation = (x_pert - x).detach()
+            # Normalize the perturbation w.r.t the epsilon size, so comparing different epsilons is fair.
+            perturbation_normalized = perturbation / epsilon if epsilon > 0 else perturbation
+            perturbation = perturbation.cpu()
+            perturbation_normalized = perturbation_normalized.cpu()
+            # perturbations.append(perturbation)
+            for i in range(perturbation.shape[0]):
+                # Apply transformations on perturbation
+                perturbations.append(preprocess(perturbation[i]))
+                perturbations_normalized.append(preprocess(perturbation_normalized[i]))
+        
+        # Create a DataLoader for the perturbations
+        perturbations_dataloader = torch.utils.data.DataLoader(perturbations, batch_size=32, shuffle=False,)
+        perturbations_normalized_dataloader = torch.utils.data.DataLoader(perturbations_normalized, batch_size=32, shuffle=False)
+        perturbations_dataloaders.append(perturbations_dataloader)
+        perturbations_normalized_dataloaders.append(perturbations_normalized_dataloader)
+    # Now calculate the FID score between each pair of perturbations dataloaders.
+    for i in range(len(evaluated_epsilons)):
+        for j in range(i, len(evaluated_epsilons)):
+            if i>=j:
+                continue
+            fid_score = calculate_fid(perturbations_dataloaders[i], perturbations_dataloaders[j], device=args.device)
+            cosine_score = calculate_cosine(perturbations_dataloaders[i], perturbations_dataloaders[j], device=args.device)
+            mse_score = calculate_MSE(perturbations_dataloaders[i], perturbations_dataloaders[j], device=args.device)
+            print(f"metrics between epsilon {evaluated_epsilons[i]} and {evaluated_epsilons[j]}: FID: {fid_score}, Cosine: {cosine_score}, MSE: {mse_score}")
+            FID_matrix[i, j] = fid_score
+            cosine_matrix[i, j] = cosine_score
+            MSE_matrix[i, j] = mse_score
+            FID_matrix[j, i] = fid_score
+            cosine_matrix[j, i] = cosine_score
+            MSE_matrix[j, i] = mse_score
+
+            # Normalized
+            fid_score_normalized = calculate_fid(perturbations_normalized_dataloaders[i], perturbations_normalized_dataloaders[j], device=args.device)
+            cosine_score_normalized = calculate_cosine(perturbations_normalized_dataloaders[i], perturbations_normalized_dataloaders[j], device=args.device)
+            mse_score_normalized = calculate_MSE(perturbations_normalized_dataloaders[i], perturbations_normalized_dataloaders[j], device=args.device)
+            print(f"metrics between epsilon {evaluated_epsilons[i]} and {evaluated_epsilons[j]} (normalized): FID: {fid_score_normalized}, Cosine: {cosine_score_normalized}, MSE: {mse_score_normalized}")
+            FID_matrix_normalized[i, j] = fid_score_normalized
+            cosine_matrix_normalized[i, j] = cosine_score_normalized
+            MSE_matrix_normalized[i, j] = mse_score_normalized
+            FID_matrix_normalized[j, i] = fid_score_normalized
+            cosine_matrix_normalized[j, i] = fid_score_normalized
+            MSE_matrix_normalized[j, i] = fid_score_normalized
+    # Save to a csv files the FID, cosine and mse matrices
+    # Make sure the directory exists
+    for matrix, name in zip([FID_matrix, cosine_matrix, MSE_matrix], ['FID', 'Cosine', 'MSE']):
+        os.makedirs(f'plots/similarity/{args.dataset}/non-normalized', exist_ok=True)
+        with open(f'plots/similarity/{args.dataset}/non-normalized/perturbations_{name.lower()}_matrix.csv', 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([''] + evaluated_epsilons)
+            for i, row in enumerate(matrix):
+                writer.writerow([evaluated_epsilons[i]] + row.tolist())
+    # Save the normalized matrices as well
+    for matrix, name in zip([FID_matrix_normalized, cosine_matrix_normalized, MSE_matrix_normalized], ['FID', 'Cosine', 'MSE']):
+        os.makedirs(f'plots/similarity/{args.dataset}/normalized', exist_ok=True)
+        with open(f'plots/similarity/{args.dataset}/normalized/perturbations_{name.lower()}_matrix.csv', 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([''] + evaluated_epsilons)
+            for i, row in enumerate(matrix):
+                writer.writerow([evaluated_epsilons[i]] + row.tolist())
+    
+    # Generate improved plots using the plot_similarity_from_csv functions
+    # Non-normalized matrices
+    for matrix, name in zip([FID_matrix, cosine_matrix, MSE_matrix], ['FID', 'Cosine', 'MSE']):
+        # Skip epsilon 0 for plotting if it exists
+        plot_matrix = matrix.copy()
+        plot_epsilons = evaluated_epsilons.copy()
+        
+        if len(plot_epsilons) > 0 and plot_epsilons[0] == 0:
+            plot_matrix = plot_matrix[1:, 1:]  # Remove first row and column (epsilon 0)
+            plot_epsilons = plot_epsilons[1:]  # Remove first epsilon (0)
+        
+        output_path = f'plots/similarity/{args.dataset}/non-normalized/perturbations_similarity_{name}.png'
+        create_improved_plot(plot_matrix, plot_epsilons, name, output_path, normalized=False)
+    
+    # Normalized matrices
+    for matrix, name in zip([FID_matrix_normalized, cosine_matrix_normalized, MSE_matrix_normalized], ['FID', 'Cosine', 'MSE']):
+        # Skip epsilon 0 for plotting if it exists
+        plot_matrix = matrix.copy()
+        plot_epsilons = evaluated_epsilons.copy()
+        
+        if len(plot_epsilons) > 0 and plot_epsilons[0] == 0:
+            plot_matrix = plot_matrix[1:, 1:]  # Remove first row and column (epsilon 0)
+            plot_epsilons = plot_epsilons[1:]  # Remove first epsilon (0)
+        
+        output_path = f'plots/similarity/{args.dataset}/normalized/perturbations_similarity_{name}_normalized.png'
+        create_improved_plot(plot_matrix, plot_epsilons, name, output_path, normalized=True)
+
 def configure_optimizers(model, train_dataloader, args):
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(
@@ -164,6 +301,16 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         image_size = 224    
     # clean_transform.transforms.append(Cutout(n_holes=1, length=image_size//2))
     val_best_accuracy = 0
+    if args.train_method == 'sparse_pgd':
+        epsilons_pixels_percentage = [1/(2**(i+1)) for i in range(len(args.sparse_attacks_epsilons))]
+        # normalize epsilons_pixels_percentage
+        epsilons_pixels_percentage = [percentage/sum(epsilons_pixels_percentage) for percentage in epsilons_pixels_percentage]
+        epsilons_pixels = [int(image_size*image_size*percentage) for percentage in epsilons_pixels_percentage]
+        # Making sure that all pixels are treated, not less not more. Total pixels should be image_size*image_size.
+        epsilons_pixels[-1] = image_size*image_size - sum(epsilons_pixels[:-1])
+        sparse_attacks = [SparsePGD(model=model, epsilon=epsilon, k=pixels, t=args.pgd_num_steps, classes=args.num_classes) \
+                          for epsilon, pixels in zip(args.sparse_attacks_epsilons, epsilons_pixels)]
+        
     for epoch in range(args.max_epochs):
         time = datetime.now(timezone).strftime("%d/%m %H:%M - ")
         
@@ -179,9 +326,31 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
         for batch in tqdm(train_loader, desc=f'{time}Training epoch {epoch+1}'):
             indices, epsilons, x, y = batch
             x, y = x.to(args.device), y.to(args.device)
+
+
+            ### Code for Sparse-PGD ###
+            if args.train_method == 'sparse_pgd':
+                custom_mask = torch.ones((x.shape[0], 1, image_size, image_size), device=args.device, dtype=torch.bool)
+                x_pert = x.clone().detach()
+                for sparse_attack in sparse_attacks:
+                    if np.random.rand() < 1/2:
+                        sparse_attack.change_masking()
+                    sparse_attack.custom_mask = custom_mask
+                    x_pert, _, _ = sparse_attack(x_pert, y)
+                    # detach x_pert
+                    x_pert = x_pert.detach()
+                    # Create a binary mask with 1 where x_pert is the same as x, and 0 otherwise
+                    custom_mask = (x_pert - x).abs().detach()
+                    # Sum over the channels dimension
+                    custom_mask = custom_mask.sum(dim=1, keepdim=True)
+                    # Binarize it, but with tolerance to avoid numerical issues
+                    custom_mask = (custom_mask.abs() < 1e-8)
+            ### Code ###
+
+            #custom_mask.view(128,-1).sum(dim=1).to(float).mean().item()
             train_samples_counter += x.shape[0]
             epsilons_to_pgd = args.max_epsilon
-            if args.train_method in ['adaptive', 're_introduce']:
+            if args.train_method in ['adaptive', 're_introduce', 'adaptive_punish']:
                 epsilons += args.epsilon_step_size
                 epsilons_tensor = epsilons.clone().to(args.device).requires_grad_(False)
                 if args.train_method == 're_introduce':
@@ -214,19 +383,11 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
                     # epsilons_tensor -= samples.squeeze(1)
                     epsilons_tensor = samples.squeeze(1)
 
-                    # Legacy code
-                    # # Sample a random boolean tensor of the len of epsilon where probability to get 1 is 'p'
-                    # # p = 0.5
-                    # random_bool = torch.rand(len(epsilons_tensor), device=args.device) < re_introduce_cur_prob
-                    # # Sample a random uniform tensor of the len of epsilons
-                    # random_uniform = torch.rand(len(epsilons_tensor), device=args.device)
-                    # random_uniform *= epsilons_tensor*random_bool
-                    # epsilons_tensor -= random_uniform
                 epsilons_tensor = epsilons_tensor.unsqueeze(1).unsqueeze(1).unsqueeze(1)
                 epsilons_to_pgd = epsilons_tensor
             
             gdnorm_batch = gdnorm_list[indices] if args.ATAS else None
-            x_pert = PGD(model, x, y, epsilons_to_pgd, args.pgd_num_steps, args, gdnorms=gdnorm_batch)
+            x_pert = PGD(model, x, y, epsilons_to_pgd, args.pgd_num_steps, args, gdnorms=gdnorm_batch) if not args.train_method == 'sparse_pgd' else x_pert
             if args.ATAS:
                 # If we use ATAS, PGD returns two objects, the perturbed image and the gradient norm
                 x_pert, new_gdnorm_batch = x_pert
@@ -250,7 +411,6 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             with torch.autocast(device_type='cuda', dtype=torch.float16):
                 y_clean_score = model(x_augmented)
                 loss_clean = F.cross_entropy(y_clean_score, y)
-                a=1
             # if args.use_clean_loss:
             # scaled_loss_clean = args.scaler.scale(loss_clean)
             # scaled_loss_pert = args.scaler.scale(loss_pert)
@@ -300,9 +460,15 @@ def adv_training(model, train_loader, validation_loader, test_loader, args):
             y_pred = torch.argmax(y_score, dim=1)
             incorrect = (y_pred!=y).to('cpu')
             train_error_samples += incorrect.sum().item()
-            if args.train_method == 'adaptive' or args.train_method == 're_introduce':
-                tmp = args.epsilon_step_size*incorrect
+            if args.train_method in ['adaptive', 're_introduce', 'adaptive_punish']:
+                if args.train_method == 'adaptive_punish':
+                    # Punish the samples that are misclassified.
+                    tmp = 2 * args.epsilon_step_size * incorrect
+                else:
+                    tmp = args.epsilon_step_size * incorrect
                 epsilons -= tmp
+                # Clamping the epsilons to be in the range of 0 to max_epsilon
+                epsilons = torch.clamp(epsilons, 0, args.max_epsilon)
                 train_loader.dataset.epsilons[indices] = epsilons
                 train_loader.dataset.epsilons[indices] = epsilon_clamp(train_loader.dataset.epsilons[indices], args.max_epsilon)
             
